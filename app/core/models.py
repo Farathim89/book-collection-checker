@@ -76,8 +76,16 @@ class Series:
     track: list[str] = field(default_factory=list)  # formats you collect it in ([] = the ones you own)
 
     # -- what you have ------------------------------------------------------
+    def index_of(self, o: Owned) -> float | None:
+        """Your copy's number - Audible's, when the ASIN is the same ('6.1' Part One is Audible's #6)."""
+        if o.asin:
+            hit = next((i for i, v in self.audible.items() if v.asin and v.asin == o.asin), None)
+            if hit is not None:
+                return hit
+        return o.index
+
     def have(self, fmt: str) -> set[float]:
-        return {o.index for o in self.owned if o.fmt == fmt and o.index is not None}
+        return {i for o in self.owned if o.fmt == fmt and (i := self.index_of(o)) is not None}
 
     @property
     def formats(self) -> set[str]:
@@ -92,7 +100,7 @@ class Series:
         out = dict(self.others)
         for i, v in self.audible.items():  # an audiobook volume exists as a book too
             out.setdefault(i, v)
-        owned = [o.index for o in self.owned if o.index is not None]
+        owned = [i for o in self.owned if (i := self.index_of(o)) is not None]
         top = max([*out, float(self.total_hint or 0), *owned], default=0)
         for n in range(1, int(top) + 1):  # 1..N: AniList knows the count, a gap in yours shows too
             out.setdefault(float(n), Volume(float(n), source="anilist" if n <= (self.total_hint or 0) else "gap"))

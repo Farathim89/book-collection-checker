@@ -452,8 +452,8 @@ class MainWindow(QMainWindow):
         self._show_cover(first, next(iter(sorted(s.audible.items())), (None, None))[1])
         have = {f: {} for f in (AUDIO, EBOOK)}
         for o in s.owned:
-            if o.index is not None:
-                have[o.fmt].setdefault(o.index, o)
+            if (i := s.index_of(o)) is not None:
+                have[o.fmt].setdefault(i, o)
         indexes = sorted(set(s.known(AUDIO)) | set(s.known(EBOOK)) | set(have[AUDIO]) | set(have[EBOOK]))
         p = theme._current  # noqa: SLF001
         t.setRowCount(len(indexes))
@@ -495,7 +495,7 @@ class MainWindow(QMainWindow):
             i = float(self.volumes.item(rows[0].row(), 0).text())
         except ValueError:
             return
-        owned = next((o for o in s.owned if o.index == i), None)
+        owned = next((o for o in s.owned if s.index_of(o) == i), None)
         self._show_cover(owned, s.audible.get(i))
 
     def _show_cover(self, owned, vol) -> None:

@@ -42,3 +42,10 @@ def test_one_series_written_two_ways():
               AUDIO, "light novel", "ABS")
     series, _ = group([a, b])
     assert len(series) == 1 and len(next(iter(series.values())).owned) == 2
+
+
+def test_same_asin_is_the_same_volume_whatever_its_number():
+    s = Series("k", "Witch and Mercenary", "Chohokiteki Kaeru", "light novel")
+    s.owned = [Owned("Vol. 6", [], "Witch and Mercenary", 6.1, AUDIO, "light novel", "ABS", asin="B0HF9KN24S")]
+    s.audible = {6.0: Volume(6.0, "Witch and Mercenary, Vol. 6: Part 1", "2026-08-14", "B0HF9KN24S")}
+    assert s.have(AUDIO) == {6.0} and not s.missing(AUDIO)
