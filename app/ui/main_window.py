@@ -23,7 +23,9 @@ from ..portable import ui_settings
 from . import theme
 
 FILTERS = [("All series", "all"), ("Missing books", "missing"), ("Coming soon", "upcoming"),
-           ("Complete", "complete"), ("Not checked online", "unchecked"), ("📅 Release calendar", "calendar")]
+           ("Complete", "complete"), ("Not checked online", "unchecked"), ("📅 Release calendar", "calendar"),
+           ("📚 Standalone books", "standalone")]
+ALONE_COLS = ["Title", "Author", "Kind", "Format", "Where", "Read"]
 CALENDAR_COLS = ["Date", "Series", "#", "Title", "Author", "You have"]
 KIND_FILTERS = [("Audiobooks", "audiobook"), ("Light novels", "light novel"), ("EBooks", "ebook"),
                 ("Manga", "manga")]
@@ -74,6 +76,7 @@ class MainWindow(QMainWindow):
         self.pages = QStackedWidget()
         self.pages.addWidget(split)
         self.pages.addWidget(self._calendar())
+        self.pages.addWidget(self._standalone())
         v.addWidget(self.pages, 1)
         h.addWidget(main, 1)
         self.setCentralWidget(root)
@@ -174,6 +177,43 @@ class MainWindow(QMainWindow):
             t.setColumnWidth(c, width)
         t.itemDoubleClicked.connect(lambda it: (u := self.cal.item(it.row(), 0).data(Qt.UserRole)) and webbrowser.open(u))
         return t
+
+    def _standalone(self) -> QTableWidget:
+        t = self.alone_table = QTableWidget(0, len(ALONE_COLS))
+        t.setHorizontalHeaderLabels(ALONE_COLS)
+        t.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        t.setSelectionBehavior(QAbstractItemView.SelectRows)
+        t.setSortingEnabled(True)
+        t.verticalHeader().setVisible(False)
+        t.setWordWrap(False)
+        head = t.horizontalHeader()
+        head.setSectionResizeMode(QHeaderView.Interactive)
+        head.setSectionResizeMode(0, QHeaderView.Stretch)
+        for c, width in ((1, 200), (2, 110), (3, 80), (4, 200), (5, 70)):
+            t.setColumnWidth(c, width)
+        t.itemDoubleClicked.connect(self._open_alone)
+        return t
+
+    def fill_standalone(self) -> None:
+        q = self.search.text().strip().lower()
+        rows = [o for o in self.alone if not q or q in o.title.lower() or q in o.author.lower()]
+        t = self.alone_table
+        t.setSortingEnabled(False)
+        t.setRowCount(len(rows))
+        for r, o in enumerate(sorted(rows, key=lambda o: (o.author.lower(), o.title.lower()))):
+            read = "✔" if o.finished else (f"{o.progress:.0%}" if o.progress else "")
+            for c, val in enumerate((o.title, o.author, o.kind, "🎧" if o.fmt == AUDIO else "📖", o.source, read)):
+                it = QTableWidgetItem(val)
+                if c == 0:
+                    it.setData(Qt.UserRole, o.path)
+                t.setItem(r, c, it)
+        t.setSortingEnabled(True)
+
+    def _open_alone(self, item: QTableWidgetItem) -> None:
+        path = self.alone_table.item(item.row(), 0).data(Qt.UserRole)
+        if path:
+            p = Path(path)
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(p if p.is_dir() else p.parent)))
 
     def fill_calendar(self) -> None:
         q = self.search.text().strip().lower()
@@ -286,7 +326,13 @@ class MainWindow(QMainWindow):
     def fill(self) -> None:
         item = self.menu.currentItem()
         calendar = bool(item and item.data(Qt.UserRole) == ("show", "calendar"))
-        self.pages.setCurrentIndex(1 if calendar else 0)
+        alone = bool(item and item.data(Qt.UserRole) == ("show", "standalone"))
+        self.pages.setCurrentIndex(1 if calendar else 2 if alone else 0)
+        if alone:
+            self.fill_standalone()
+            self._totals()
+            self.status.setText(f"{self.alone_table.rowCount()} books without a series - double-click to open the folder")
+            return
         if calendar:
             self.fill_calendar()
             self._totals()
