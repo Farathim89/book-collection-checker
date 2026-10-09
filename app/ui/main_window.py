@@ -90,6 +90,8 @@ class MainWindow(QMainWindow):
         geo = ui_settings().value("geometry")
         if geo is not None:
             self.restoreGeometry(geo)
+        for table in (self.table, self.volumes, self.cal, self.alone_table):
+            make_copyable(table)
         self.fill()
         if not self.series:
             self.scan()
@@ -663,6 +665,35 @@ class MainWindow(QMainWindow):
 def _have(s: Series, fmt: str) -> str:
     n = len(s.have(fmt))
     return str(n) if n else ""
+
+
+def make_copyable(table: QTableWidget) -> None:
+    """Ctrl+C copies the selected rows (tab between cells); right-click: Copy (the cell) / Copy row."""
+    from PySide6.QtGui import QAction, QKeySequence  # noqa: PLC0415
+    from PySide6.QtWidgets import QMenu  # noqa: PLC0415
+
+    def rows_text() -> str:
+        rows = sorted({i.row() for i in table.selectedIndexes()})
+        return "\n".join("\t".join(table.item(r, c).text() if table.item(r, c) else ""
+                                   for c in range(table.columnCount()) if not table.isColumnHidden(c))
+                         for r in rows)
+
+    copy = QAction("Copy", table)
+    copy.setShortcut(QKeySequence.Copy)
+    copy.setShortcutContext(Qt.WidgetShortcut)
+    copy.triggered.connect(lambda: QGuiApplication.clipboard().setText(rows_text()))
+    table.addAction(copy)
+
+    def menu(pos) -> None:
+        item = table.itemAt(pos)
+        m = QMenu(table)
+        if item is not None:
+            m.addAction("Copy", lambda: QGuiApplication.clipboard().setText(item.text()))
+        m.addAction("Copy row", lambda: QGuiApplication.clipboard().setText(rows_text()))
+        m.exec(table.viewport().mapToGlobal(pos))
+
+    table.setContextMenuPolicy(Qt.CustomContextMenu)
+    table.customContextMenuRequested.connect(menu)
 
 
 def _missing_text(s: Series) -> str:
