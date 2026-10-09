@@ -176,7 +176,7 @@ class MainWindow(QMainWindow):
         head = t.horizontalHeader()
         head.setSectionResizeMode(QHeaderView.Interactive)
         head.setSectionResizeMode(0, QHeaderView.Stretch)  # the series name gets the room
-        for c, width in enumerate((0, 150, 90, 46, 46, 70, 140)):
+        for c, width in enumerate((0, 150, 90, 46, 46, 100, 140)):
             if width:
                 t.setColumnWidth(c, width)
         t.setWordWrap(False)
@@ -370,7 +370,7 @@ class MainWindow(QMainWindow):
             nxt = s.next_release
             miss = s.missing_count
             values = [s.name, s.author, s.kind, _have(s, AUDIO), _have(s, EBOOK),
-                      (str(miss) if miss else ("✓" if s.checked else "")),
+                      (_missing_text(s) if miss else ("✓" if s.checked else "")),
                       (f"#{fmt_index(nxt.index)}  {nxt.release}" if nxt else "")]
             for c, val in enumerate(values):
                 it = _Item(val)
@@ -378,8 +378,12 @@ class MainWindow(QMainWindow):
                     it.setData(Qt.UserRole, s.key)
                     it.setToolTip(f"{s.name}\n{s.author} · {len(s.owned)} books")
                 if c == 5:
-                    it.setData(Qt.UserRole + 1, miss)
+                    it.setData(Qt.UserRole + 1, miss)  # sorts by the total
                     it.setForeground(QColor(p.problem if miss else p.ready))
+                    if miss:
+                        a, e = len(s.missing(AUDIO)), len(s.missing(EBOOK))
+                        it.setToolTip("\n".join(x for x in (f"{a} audiobook(s) missing" if a else "",
+                                                            f"{e} ebook(s) missing" if e else "") if x))
                 if c == 6 and nxt:
                     it.setForeground(QColor(p.check))
                 t.setItem(r, c, it)
@@ -661,10 +665,19 @@ def _have(s: Series, fmt: str) -> str:
     return str(n) if n else ""
 
 
+def _missing_text(s: Series) -> str:
+    """'🎧 2  📖 4' - what is missing of which format."""
+    parts = [f"{icon} {n}" for icon, n in (("🎧", len(s.missing(AUDIO))), ("📖", len(s.missing(EBOOK)))) if n]
+    return "  ".join(parts)
+
+
 class _Item(QTableWidgetItem):
-    """Sorts numbers as numbers ('10' after '9')."""
+    """Sorts numbers as numbers ('10' after '9'); a cell with a sort value (Missing) by that."""
 
     def __lt__(self, other) -> bool:  # noqa: D105
+        ka, kb = self.data(Qt.UserRole + 1), other.data(Qt.UserRole + 1)
+        if ka is not None or kb is not None:
+            return (ka or 0) < (kb or 0)
         a, b = self.text(), other.text()
         try:
             return float(a or -1) < float(b or -1)
