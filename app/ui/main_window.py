@@ -119,6 +119,17 @@ class MainWindow(QMainWindow):
         self.menu.setCurrentRow(0)
         self.menu.currentItemChanged.connect(lambda *_: self.fill())
         v.addWidget(self.menu, 1)
+        for text, fn, primary in (("🔄  Scan library", self.scan, False), ("🌐  Check online", self.check_online, True),
+                                  ("📋  Copy missing list", self.copy_missing, False),
+                                  ("⚙  Settings", self.open_settings, False)):
+            b = QPushButton(text)
+            b.setObjectName("primary" if primary else "sideaction")
+            b.setToolTip({"🔄  Scan library": "Read your libraries again (keeps what was found online)",
+                          "🌐  Check online": "Look up the series shown for missing and upcoming books",
+                          "📋  Copy missing list": "Missing and upcoming books of the series shown, to the clipboard",
+                          }.get(text, ""))
+            b.clicked.connect(lambda _=False, f=fn: f())
+            v.addWidget(b)
         self.totals = QLabel()
         self.totals.setObjectName("muted")
         self.totals.setWordWrap(True)
@@ -132,13 +143,6 @@ class MainWindow(QMainWindow):
         self.search.setPlaceholderText("Search series or author…")
         self.search.textChanged.connect(lambda *_: self.fill())
         row.addWidget(self.search, 1)
-        for text, fn, primary in (("Scan library", self.scan, False), ("Check online", self.check_online, True),
-                                  ("Copy missing list", self.copy_missing, False), ("Settings", self.open_settings, False)):
-            b = QPushButton(text)
-            if primary:
-                b.setObjectName("primary")
-            b.clicked.connect(fn)
-            row.addWidget(b)
         self.b_stop = QPushButton("Stop")
         self.b_stop.setVisible(False)
         self.b_stop.clicked.connect(lambda: self.worker and setattr(self.worker, "stop", True))
