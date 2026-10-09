@@ -30,4 +30,4 @@ def merge_lookups(new: dict[str, Series], old: dict[str, Series]) -> None:
     for key, s in new.items():
         if (o := old.get(key)) is not None:
             s.audible, s.others, s.total_hint, s.status = o.audible, o.others, o.total_hint, o.status
-            s.links, s.checked = o.links, o.checked
+            s.links, s.checked, s.track = o.links, o.checked, o.track

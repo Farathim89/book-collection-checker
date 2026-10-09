@@ -53,7 +53,8 @@ def from_abs(settings: Settings, log: Progress = lambda _: None) -> list[Owned]:
                 title=md.get("title") or Path(path).name, authors=_people(md.get("authorName")),
                 series=series, index=index, fmt=fmt, kind=kind_of(lib.get("name") or "", fmt, comic),
                 source=f"ABS: {lib.get('name')}", path=path, asin=md.get("asin") or "",
-                finished=bool(p.get("isFinished")), progress=float(p.get("progress") or 0)))
+                finished=bool(p.get("isFinished")), progress=float(p.get("progress") or 0),
+                item_id=it.get("id") or ""))
     return out
 
 
@@ -166,6 +167,17 @@ def group(owned: list[Owned], hidden: set[str] = frozenset()) -> tuple[dict[str,
         s.owned.append(o)
         if o.kind == "light novel" and s.kind != "light novel":
             s.kind = "light novel"  # an audiobook series whose ebooks are light novels
+    # one series written two ways: '...in the Real World' (ebooks) / '...in the Real World, Too' (audio)
+    for short in sorted(series, key=len):
+        s = series.get(short)
+        if s is None:
+            continue
+        long_ = next((k for k, o in series.items() if k != short and k.endswith("|manga") == short.endswith("|manga")
+                      and k.split("|")[0].startswith(short.split("|")[0]) and len(k) - len(short) <= 6
+                      and fold(o.author) == fold(s.author)), None)
+        if long_ is not None:
+            series[long_].owned += s.owned
+            del series[short]
     for s in series.values():  # the name / author most volumes use
         s.name = _most(o.series for o in s.owned) or s.name
         s.author = _most(o.author for o in s.owned) or s.author

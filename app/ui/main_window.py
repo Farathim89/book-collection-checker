@@ -6,8 +6,9 @@ import webbrowser
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QRunnable, Qt, QThreadPool, QUrl, Signal
-from PySide6.QtGui import QColor, QDesktopServices, QGuiApplication
-from PySide6.QtWidgets import (QAbstractItemView, QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QFrame,
+from PySide6.QtGui import QColor, QDesktopServices, QGuiApplication, QPixmap
+from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
+from PySide6.QtWidgets import (QAbstractItemView, QStackedWidget, QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QFrame,
                                QHBoxLayout, QHeaderView, QLabel, QLineEdit, QListWidget, QListWidgetItem,
                                QMainWindow, QMessageBox, QPlainTextEdit, QProgressBar, QPushButton, QSplitter,
                                QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget, QCheckBox, QComboBox)
@@ -22,7 +23,8 @@ from ..portable import ui_settings
 from . import theme
 
 FILTERS = [("All series", "all"), ("Missing books", "missing"), ("Coming soon", "upcoming"),
-           ("Complete", "complete"), ("Not checked online", "unchecked")]
+           ("Complete", "complete"), ("Not checked online", "unchecked"), ("📅 Release calendar", "calendar")]
+CALENDAR_COLS = ["Date", "Series", "#", "Title", "Author", "You have"]
 KIND_FILTERS = [("Audiobooks", "audiobook"), ("Light novels", "light novel"), ("EBooks", "ebook"),
                 ("Manga", "manga")]
 SERIES_COLS = ["Series", "Author", "Kind", "🎧", "📖", "Missing", "Next release"]
@@ -69,7 +71,10 @@ class MainWindow(QMainWindow):
         split.addWidget(self._series_table())
         split.addWidget(self._details())
         split.setSizes([1060, 480])
-        v.addWidget(split, 1)
+        self.pages = QStackedWidget()
+        self.pages.addWidget(split)
+        self.pages.addWidget(self._calendar())
+        v.addWidget(self.pages, 1)
         h.addWidget(main, 1)
         self.setCentralWidget(root)
         self.status = QLabel()
@@ -155,6 +160,51 @@ class MainWindow(QMainWindow):
         t.itemSelectionChanged.connect(self.show_series)
         return t
 
+    def _calendar(self) -> QTableWidget:
+        t = self.cal = QTableWidget(0, len(CALENDAR_COLS))
+        t.setHorizontalHeaderLabels(CALENDAR_COLS)
+        t.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        t.setSelectionBehavior(QAbstractItemView.SelectRows)
+        t.verticalHeader().setVisible(False)
+        t.setWordWrap(False)
+        head = t.horizontalHeader()
+        head.setSectionResizeMode(QHeaderView.Interactive)
+        head.setSectionResizeMode(3, QHeaderView.Stretch)
+        for c, width in ((0, 110), (1, 380), (2, 50), (4, 170), (5, 90)):
+            t.setColumnWidth(c, width)
+        t.itemDoubleClicked.connect(lambda it: (u := self.cal.item(it.row(), 0).data(Qt.UserRole)) and webbrowser.open(u))
+        return t
+
+    def fill_calendar(self) -> None:
+        q = self.search.text().strip().lower()
+        rows = []
+        for s in self.series.values():
+            if q and q not in s.name.lower() and q not in s.author.lower():
+                continue
+            for v in s.upcoming():
+                rows.append((v.release, s, v))
+        seen = set()  # the same volume from two series entries: once
+        rows = [r for r in rows if not ((r[0], r[1].author, r[2].index, r[2].title) in seen
+                                        or seen.add((r[0], r[1].author, r[2].index, r[2].title)))]
+        rows.sort(key=lambda r: (r[0], r[1].name.lower()))
+        t = self.cal
+        t.setRowCount(len(rows))
+        p = theme._current  # noqa: SLF001
+        today = dt.date.today()
+        for r, (date, s, v) in enumerate(rows):
+            have = f"{len(s.owned)} books"
+            for c, val in enumerate((date, s.name, fmt_index(v.index), v.title, s.author, have)):
+                it = QTableWidgetItem(val)
+                if c == 0:
+                    it.setData(Qt.UserRole, v.url)
+                    try:
+                        soon = (dt.date.fromisoformat(date) - today).days <= 30
+                    except ValueError:
+                        soon = False
+                    it.setForeground(QColor(p.check if soon else p.text))
+                t.setItem(r, c, it)
+        self.status.setText(f"{len(rows)} upcoming volumes - double-click one to open it on Audible")
+
     def _details(self) -> QWidget:
         w = QWidget()
         v = QVBoxLayout(w)
@@ -163,12 +213,32 @@ class MainWindow(QMainWindow):
         self.heading.setObjectName("heading")
         self.heading.setWordWrap(True)
         v.addWidget(self.heading)
+        top = QHBoxLayout()
+        self.cover = QLabel()
+        self.cover.setObjectName("cover")
+        self.cover.setFixedSize(150, 150)
+        self.cover.setAlignment(Qt.AlignCenter)
+        top.addWidget(self.cover)
+        right = QVBoxLayout()
         self.info = QLabel()
         self.info.setObjectName("muted")
         self.info.setWordWrap(True)
         self.info.setTextFormat(Qt.RichText)
         self.info.setOpenExternalLinks(True)
-        v.addWidget(self.info)
+        right.addWidget(self.info)
+        right.addWidget(QLabel("Count missing for:"))
+        self.track_audio = QCheckBox("🎧 Audiobooks")
+        self.track_ebook = QCheckBox("📖 Ebooks")
+        for cb in (self.track_audio, self.track_ebook):
+            cb.setToolTip("Which formats you collect this series in - missing books are only counted for these")
+            cb.toggled.connect(self._track_changed)
+            right.addWidget(cb)
+        right.addStretch()
+        top.addLayout(right, 1)
+        v.addLayout(top)
+        self.net = QNetworkAccessManager(self)
+        self.net.finished.connect(self._cover_loaded)
+        self._cover_for = ""
         t = self.volumes = QTableWidget(0, len(VOLUME_COLS))
         t.setHorizontalHeaderLabels(VOLUME_COLS)
         t.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -178,6 +248,7 @@ class MainWindow(QMainWindow):
         for c in (0, 2, 3, 4, 5):
             t.horizontalHeader().setSectionResizeMode(c, QHeaderView.ResizeToContents)
         t.itemDoubleClicked.connect(self._open_volume)
+        t.itemSelectionChanged.connect(self._volume_cover)
         v.addWidget(t, 1)
         row = QHBoxLayout()
         b = QPushButton("Check this series again")
@@ -213,6 +284,14 @@ class MainWindow(QMainWindow):
         return out
 
     def fill(self) -> None:
+        item = self.menu.currentItem()
+        calendar = bool(item and item.data(Qt.UserRole) == ("show", "calendar"))
+        self.pages.setCurrentIndex(1 if calendar else 0)
+        if calendar:
+            self.fill_calendar()
+            self._totals()
+            self.status.setText(f"{self.cal.rowCount()} upcoming volumes - double-click one to open it on Audible")
+            return
         keep = self._selected_key()
         t = self.table
         t.setSortingEnabled(False)
@@ -269,6 +348,7 @@ class MainWindow(QMainWindow):
         if s is None:
             self.heading.setText("Select a series")
             self.info.clear()
+            self.cover.clear()
             t.setRowCount(0)
             return
         self.heading.setText(f"{s.name} — {s.author}")
@@ -283,6 +363,12 @@ class MainWindow(QMainWindow):
         else:
             extra.append(f"checked {s.checked.replace('T', ' ')}")
         self.info.setText(" · ".join(x for x in [s.kind, links, *extra] if x))
+        for cb, f in ((self.track_audio, AUDIO), (self.track_ebook, EBOOK)):
+            cb.blockSignals(True)
+            cb.setChecked(f in s.formats)
+            cb.blockSignals(False)
+        first = min((o for o in s.owned), key=lambda o: o.index if o.index is not None else 9999, default=None)
+        self._show_cover(first, next(iter(sorted(s.audible.items())), (None, None))[1])
         have = {f: {} for f in (AUDIO, EBOOK)}
         for o in s.owned:
             if o.index is not None:
@@ -315,6 +401,67 @@ class MainWindow(QMainWindow):
                 elif upcoming:
                     it.setForeground(QColor(p.check))
                 t.setItem(r, c, it)
+
+    # -- covers ----------------------------------------------------------------------------------------
+    def _volume_cover(self) -> None:
+        key = self._selected_key()
+        s = self.series.get(key) if key else None
+        rows = self.volumes.selectionModel().selectedRows()
+        if s is None or not rows:
+            return
+        try:
+            i = float(self.volumes.item(rows[0].row(), 0).text())
+        except ValueError:
+            return
+        owned = next((o for o in s.owned if o.index == i), None)
+        self._show_cover(owned, s.audible.get(i))
+
+    def _show_cover(self, owned, vol) -> None:
+        """From your own copy (Audiobookshelf, or a cover file in its folder), else Audible's picture."""
+        self.cover.setText("no cover")
+        if owned is not None and owned.path:
+            folder = Path(owned.path)
+            folder = folder if folder.is_dir() else folder.parent
+            for name in ("cover.jpg", "cover.png", "cover.jpeg", "folder.jpg"):
+                if (folder / name).is_file():
+                    self._set_cover(QPixmap(str(folder / name)))
+                    return
+        url, headers = "", {}
+        if owned is not None and owned.item_id and self.settings.abs_url and self.settings.abs_api_key:
+            url = f"{self.settings.abs_url}/api/items/{owned.item_id}/cover?width=300"
+            headers = {"Authorization": f"Bearer {self.settings.abs_api_key}"}
+        elif vol is not None and vol.cover:
+            url = vol.cover
+        if not url:
+            return
+        self._cover_for = url
+        req = QNetworkRequest(QUrl(url))
+        for k, val in headers.items():
+            req.setRawHeader(k.encode(), val.encode())
+        self.net.get(req)
+
+    def _cover_loaded(self, reply: QNetworkReply) -> None:
+        reply.deleteLater()
+        if reply.url().toString() != QUrl(self._cover_for).toString() or reply.error() != QNetworkReply.NoError:
+            return
+        pix = QPixmap()
+        if pix.loadFromData(reply.readAll()):
+            self._set_cover(pix)
+
+    def _set_cover(self, pix: QPixmap) -> None:
+        if not pix.isNull():
+            self.cover.setPixmap(pix.scaled(150, 150, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+
+    def _track_changed(self) -> None:
+        key = self._selected_key()
+        s = self.series.get(key) if key else None
+        if s is None:
+            return
+        chosen = [f for cb, f in ((self.track_audio, AUDIO), (self.track_ebook, EBOOK)) if cb.isChecked()]
+        s.track = [] if set(chosen) == {o.fmt for o in s.owned} else chosen
+        store.save(STATE, self.series, self.alone, self.scanned)
+        self.fill()
+        self.show_series()
 
     def _open_volume(self, item: QTableWidgetItem) -> None:
         target = self.volumes.item(item.row(), 0).data(Qt.UserRole)

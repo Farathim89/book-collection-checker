@@ -33,3 +33,12 @@ def test_missing_only_in_formats_you_collect_and_not_upcoming():
     s.audible[5.0] = Volume(5.0, release="2999-01-01")
     assert [v.index for v in s.missing(AUDIO)] == [3.0]
     assert s.missing(EBOOK) == [] and [v.index for v in s.upcoming()] == [5.0]
+
+
+def test_one_series_written_two_ways():
+    a = Owned("v1", ["Miku"], "I Got a Cheat Skill in Another World and Became Unrivaled in the Real World", 1, EBOOK,
+              "light novel", "ABS")
+    b = Owned("v2", ["Miku"], "I Got a Cheat Skill in Another World and Became Unrivaled in The Real World, Too", 2,
+              AUDIO, "light novel", "ABS")
+    series, _ = group([a, b])
+    assert len(series) == 1 and len(next(iter(series.values())).owned) == 2

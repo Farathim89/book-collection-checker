@@ -76,7 +76,8 @@ class Lookup:
         volumes: dict[float, Volume] = {}
         for i in range(0, len(kids), 50):
             res = self.audible.get_json(self.api, {"asins": ",".join(kids[i:i + 50]),
-                                                   "response_groups": "product_desc,series,product_attrs"})
+                                                   "response_groups": "product_desc,series,product_attrs,media",
+                                                   "image_sizes": "500"})
             for p in res.get("products") or []:
                 seq = next((x.get("sequence") for x in p.get("series") or [] if x.get("asin") == series_asin), None)
                 try:
@@ -88,7 +89,8 @@ class Lookup:
                         and self.settings.audible_region in ("us", "uk", "ca", "au", "in"):
                     continue
                 v = Volume(index, p.get("title") or "", release, p.get("asin") or "",
-                           f"{self.site}/pd/{p.get('asin')}", "audible")
+                           f"{self.site}/pd/{p.get('asin')}", "audible",
+                           (p.get("product_images") or {}).get("500") or "")
                 old = volumes.get(index)
                 if old is None or (v.release and (not old.release or v.release < old.release)):
                     volumes[index] = v

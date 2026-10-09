@@ -38,6 +38,7 @@ class Owned:
     asin: str = ""
     finished: bool = False
     progress: float = 0.0
+    item_id: str = ""   # Audiobookshelf's id (for its cover)
 
     @property
     def author(self) -> str:
@@ -52,6 +53,7 @@ class Volume:
     asin: str = ""
     url: str = ""
     source: str = ""    # 'audible' / 'anilist' / 'google'
+    cover: str = ""     # image URL
 
     @property
     def upcoming(self) -> bool:
@@ -71,6 +73,7 @@ class Series:
     status: str = ""                # AniList: FINISHED / RELEASING
     links: dict[str, str] = field(default_factory=dict)          # source -> page
     checked: str = ""               # when looked up online
+    track: list[str] = field(default_factory=list)  # formats you collect it in ([] = the ones you own)
 
     # -- what you have ------------------------------------------------------
     def have(self, fmt: str) -> set[float]:
@@ -78,7 +81,8 @@ class Series:
 
     @property
     def formats(self) -> set[str]:
-        return {o.fmt for o in self.owned}
+        """The formats you collect this series in: your choice, else the ones you own."""
+        return set(self.track) if self.track else {o.fmt for o in self.owned}
 
     # -- what exists ----------------------------------------------------------
     def known(self, fmt: str) -> dict[float, Volume]:
@@ -128,4 +132,5 @@ class Series:
         s.others = {float(k): Volume(**v) for k, v in (d.get("others") or {}).items()}
         s.total_hint, s.status = d.get("total_hint"), d.get("status", "")
         s.links, s.checked = d.get("links") or {}, d.get("checked", "")
+        s.track = list(d.get("track") or [])
         return s
