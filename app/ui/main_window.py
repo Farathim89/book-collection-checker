@@ -23,7 +23,8 @@ from ..core.models import AUDIO, EBOOK, Series, fmt_index
 from ..portable import ui_settings
 from . import theme
 
-FILTERS = [("All series", "all"), ("Missing books", "missing"), ("Coming soon", "upcoming"),
+FILTERS = [("All series", "all"), ("Missing books", "missing"), ("   🎧 Missing audiobooks", "missing_audio"),
+           ("   📖 Missing ebooks", "missing_ebook"), ("Coming soon", "upcoming"),
            ("Complete", "complete"), ("Not checked online", "unchecked"), ("📅 Release calendar", "calendar"),
            ("📚 Standalone books", "standalone")]
 ALONE_COLS = ["Title", "Author", "Kind", "Format", "Where", "Read"]
@@ -337,6 +338,10 @@ class MainWindow(QMainWindow):
             if what == "kind" and s.kind != key:
                 continue
             if key == "missing" and not s.missing_count:
+                continue
+            if key == "missing_audio" and not s.missing(AUDIO):
+                continue
+            if key == "missing_ebook" and not s.missing(EBOOK):
                 continue
             if key == "upcoming" and not s.upcoming():
                 continue
