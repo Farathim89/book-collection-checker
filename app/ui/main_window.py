@@ -5,10 +5,11 @@ import datetime as dt
 import webbrowser
 from pathlib import Path
 
-from PySide6.QtCore import QObject, QRunnable, Qt, QThreadPool, QUrl, Signal
-from PySide6.QtGui import QColor, QDesktopServices, QGuiApplication, QPixmap
+from PySide6.QtCore import QObject, QRunnable, QSize, Qt, QThreadPool, QUrl, Signal
+from PySide6.QtGui import QColor, QDesktopServices, QGuiApplication, QIcon, QPixmap
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
-from PySide6.QtWidgets import (QAbstractItemView, QStackedWidget, QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QFrame,
+from PySide6.QtWidgets import (QAbstractItemView, QButtonGroup, QGridLayout, QScrollArea, QStackedWidget,
+                               QTabWidget, QToolButton, QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QFrame,
                                QHBoxLayout, QHeaderView, QLabel, QLineEdit, QListWidget, QListWidgetItem,
                                QMainWindow, QMessageBox, QPlainTextEdit, QProgressBar, QPushButton, QSplitter,
                                QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget, QCheckBox, QComboBox)
@@ -30,7 +31,7 @@ CALENDAR_COLS = ["Date", "Series", "#", "Title", "Author", "You have"]
 KIND_FILTERS = [("Audiobooks", "audiobook"), ("Light novels", "light novel"), ("EBooks", "ebook"),
                 ("Manga", "manga")]
 SERIES_COLS = ["Series", "Author", "Kind", "🎧", "📖", "Missing", "Next release"]
-VOLUME_COLS = ["#", "Title", "🎧", "📖", "Release", "Where"]
+VOLUME_COLS = ["#", "Title", "🎧", "📖", "Release"]
 
 
 class _Signals(QObject):
@@ -98,11 +99,26 @@ class MainWindow(QMainWindow):
         side = QFrame()
         side.setObjectName("sidebar")
         side.setFixedWidth(220)
-        v = QVBoxLayout(side)
-        v.setContentsMargins(10, 14, 10, 10)
-        title = QLabel("Book Collection\nChecker")
-        title.setObjectName("pagetitle")
-        v.addWidget(title)
+        outer = QVBoxLayout(side)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+        brand = QWidget()
+        brand.setObjectName("brand")
+        b = QVBoxLayout(brand)
+        b.setContentsMargins(16, 10, 16, 8)
+        b.setSpacing(0)
+        title = QLabel("BOOK COLLECTION")
+        title.setObjectName("brandtitle")
+        sub = QLabel(f"have · missing · coming  ·  v{__version__}")
+        sub.setObjectName("brandsub")
+        b.addWidget(title)
+        b.addWidget(sub)
+        outer.addWidget(brand)
+        body = QWidget()
+        body.setObjectName("sidebody")
+        outer.addWidget(body, 1)
+        v = QVBoxLayout(body)
+        v.setContentsMargins(10, 10, 10, 10)
         self.menu = QListWidget()
         self.menu.setObjectName("sidemenu")
         for label, key in FILTERS:
@@ -288,8 +304,10 @@ class MainWindow(QMainWindow):
         t.setEditTriggers(QAbstractItemView.NoEditTriggers)
         t.setSelectionBehavior(QAbstractItemView.SelectRows)
         t.verticalHeader().setVisible(False)
+        t.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        t.setWordWrap(False)
         t.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
-        for c in (0, 2, 3, 4, 5):
+        for c in (0, 2, 3, 4):
             t.horizontalHeader().setSectionResizeMode(c, QHeaderView.ResizeToContents)
         t.itemDoubleClicked.connect(self._open_volume)
         t.itemSelectionChanged.connect(self._volume_cover)
@@ -402,7 +420,9 @@ class MainWindow(QMainWindow):
             t.setRowCount(0)
             return
         self.heading.setText(f"{s.name} — {s.author}")
-        links = " · ".join(f'<a href="{u}">{n}</a>' for n, u in s.links.items() if n != "errors" and u)
+        accent = theme._current.accent  # noqa: SLF001
+        links = " · ".join(f'<a href="{u}" style="color:{accent}">{n}</a>' for n, u in s.links.items()
+                           if n != "errors" and u)
         extra = []
         if s.total_hint:
             extra.append(f"AniList: {s.total_hint} volumes ({s.status.lower()})")
@@ -441,9 +461,10 @@ class MainWindow(QMainWindow):
                     cells.append("")
             where = owned.source if owned else ""
             upcoming = bool(vol and vol.upcoming and not owned)
-            row = [fmt_index(i), title, *cells, vol.release if vol else "", where]
+            row = [fmt_index(i), title, *cells, vol.release if vol else ""]
             for c, val in enumerate(row):
                 it = QTableWidgetItem(val)
+                it.setToolTip(f"{title}\n{where}" if where else title)
                 if c == 0:
                     it.setData(Qt.UserRole, (vol.url if vol else "") or (owned.path if owned else ""))
                 if "missing" in cells:
@@ -614,11 +635,21 @@ class MainWindow(QMainWindow):
         QMessageBox.information(self, "Missing", f"Copied {len(lines)} lines to the clipboard.")
 
     def open_settings(self) -> None:
+        before = self.settings.theme
         dlg = SettingsDialog(self.settings, self)
+        dlg.preview.connect(self._preview_theme)
         if dlg.exec():
             save_settings(self.settings)
-            theme.apply(self.settings.theme)
-            self.scan()
+            self._preview_theme(self.settings.theme)
+            if dlg.sources_changed:
+                self.scan()
+        else:
+            self._preview_theme(before)  # Cancel: the old colours back
+
+    def _preview_theme(self, name: str) -> None:
+        theme.apply(name)
+        self.fill()  # the table colours come from the theme
+        self.show_series()
 
     def closeEvent(self, event) -> None:  # noqa: N802 - Qt
         ui_settings().setValue("geometry", self.saveGeometry())
@@ -641,13 +672,55 @@ class _Item(QTableWidgetItem):
             return a.lower() < b.lower()
 
 
+class ThemePicker(QWidget):
+    """Every theme as a clickable preview tile (like the Book Sorter's)."""
+    picked = Signal(str)
+
+    def __init__(self, current: str, columns: int = 4, parent=None):
+        super().__init__(parent)
+        grid = QGridLayout(self)
+        grid.setContentsMargins(0, 4, 0, 0)
+        grid.setSpacing(10)
+        self._group = QButtonGroup(self)
+        self._current = current
+        for i, name in enumerate(theme.THEMES):
+            tile = QToolButton()
+            tile.setObjectName("themetile")
+            tile.setCheckable(True)
+            tile.setChecked(name == current)
+            tile.setText(name)
+            tile.setIcon(QIcon(theme.swatch(name)))
+            tile.setIconSize(QSize(150, 84))
+            tile.setToolButtonStyle(Qt.ToolButtonTextUnderIcon)
+            tile.setCursor(Qt.PointingHandCursor)
+            tile.clicked.connect(lambda _=False, n=name: self._pick(n))
+            self._group.addButton(tile)
+            grid.addWidget(tile, i // columns, i % columns)
+
+    def _pick(self, name: str) -> None:
+        self._current = name
+        self.picked.emit(name)
+
+    def currentText(self) -> str:
+        return self._current
+
+
 class SettingsDialog(QDialog):
+    preview = Signal(str)
+
     def __init__(self, s: Settings, parent=None):
         super().__init__(parent)
         self.s = s
+        self.sources_changed = False
+        self._hidden_before = list(s.hidden_series)
         self.setWindowTitle("Settings")
-        self.resize(760, 560)
-        form = QFormLayout(self)
+        self.resize(780, 620)
+        outer = QVBoxLayout(self)
+        tabs = QTabWidget()
+        outer.addWidget(tabs, 1)
+        page = QWidget()
+        form = QFormLayout(page)
+        tabs.addTab(page, "Your books")
         self.use_abs = QCheckBox("Read my Audiobookshelf libraries (and listening progress)")
         self.use_abs.setChecked(s.use_abs)
         form.addRow(self.use_abs)
@@ -665,6 +738,9 @@ class SettingsDialog(QDialog):
         self.staging.setPlaceholderText("e.g. the Book Sorter's sorted folders")
         self.staging.setFixedHeight(70)
         form.addRow("Staging folders", self._with_add(self.staging))
+        page = QWidget()
+        form = QFormLayout(page)
+        tabs.addTab(page, "Look up")
         self.region = QComboBox()
         self.region.addItems(list(TLDS))
         self.region.setCurrentText(s.audible_region)
@@ -682,10 +758,6 @@ class SettingsDialog(QDialog):
         form.addRow("", self.use_anilist)
         form.addRow("", self.use_google)
         form.addRow("Google key", self.google_key)
-        self.theme = QComboBox()
-        self.theme.addItems(list(theme.THEMES))
-        self.theme.setCurrentText(s.theme)
-        form.addRow("Colours", self.theme)
         hidden = QLabel(f"{len(s.hidden_series)} hidden series")
         b = QPushButton("Show them again")
         b.clicked.connect(lambda: (s.hidden_series.clear(), hidden.setText("0 hidden series")))
@@ -694,10 +766,22 @@ class SettingsDialog(QDialog):
         row.addWidget(b)
         row.addStretch()
         form.addRow("Hidden", row)
+        look = QScrollArea()
+        look.setWidgetResizable(True)
+        look.setFrameShape(QFrame.NoFrame)
+        box = QWidget()
+        lv = QVBoxLayout(box)
+        lv.addWidget(QLabel("Colour theme - click one to try it, Save to keep it"))
+        self.theme = ThemePicker(s.theme if s.theme in theme.THEMES else theme.DEFAULT_THEME)
+        self.theme.picked.connect(self.preview.emit)
+        lv.addWidget(self.theme)
+        lv.addStretch()
+        look.setWidget(box)
+        tabs.addTab(look, "Look")
         buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
         buttons.accepted.connect(self._save)
         buttons.rejected.connect(self.reject)
-        form.addRow(buttons)
+        outer.addWidget(buttons)
 
     def _with_add(self, edit: QPlainTextEdit) -> QWidget:
         w = QWidget()
@@ -712,6 +796,8 @@ class SettingsDialog(QDialog):
     def _save(self) -> None:
         lines = lambda e: [x.strip() for x in e.toPlainText().splitlines() if x.strip()]  # noqa: E731
         s = self.s
+        before = (s.use_abs, s.abs_url, s.abs_api_key, list(s.library_folders), list(s.staging_folders),
+                  self._hidden_before)
         s.use_abs, s.abs_url, s.abs_api_key = self.use_abs.isChecked(), self.abs_url.text().strip().rstrip("/"), \
             self.abs_key.text().strip()
         s.library_folders, s.staging_folders = lines(self.libs), lines(self.staging)
@@ -720,4 +806,6 @@ class SettingsDialog(QDialog):
                                                       self.use_google.isChecked())
         s.google_books_key = self.google_key.text().strip()
         s.theme = self.theme.currentText()
+        self.sources_changed = before != (s.use_abs, s.abs_url, s.abs_api_key, s.library_folders, s.staging_folders,
+                                          s.hidden_series)
         self.accept()
