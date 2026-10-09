@@ -25,7 +25,7 @@ FILTERS = [("All series", "all"), ("Missing books", "missing"), ("Coming soon", 
            ("Complete", "complete"), ("Not checked online", "unchecked")]
 KIND_FILTERS = [("Audiobooks", "audiobook"), ("Light novels", "light novel"), ("EBooks", "ebook"),
                 ("Manga", "manga")]
-SERIES_COLS = ["Series", "Author", "Kind", "🎧 Have", "📖 Have", "Missing", "Next release", "Checked"]
+SERIES_COLS = ["Series", "Author", "Kind", "🎧", "📖", "Missing", "Next release"]
 VOLUME_COLS = ["#", "Title", "🎧", "📖", "Release", "Where"]
 
 
@@ -68,7 +68,7 @@ class MainWindow(QMainWindow):
         split = QSplitter()
         split.addWidget(self._series_table())
         split.addWidget(self._details())
-        split.setSizes([1000, 520])
+        split.setSizes([1060, 480])
         v.addWidget(split, 1)
         h.addWidget(main, 1)
         self.setCentralWidget(root)
@@ -148,7 +148,7 @@ class MainWindow(QMainWindow):
         head = t.horizontalHeader()
         head.setSectionResizeMode(QHeaderView.Interactive)
         head.setSectionResizeMode(0, QHeaderView.Stretch)  # the series name gets the room
-        for c, width in enumerate((0, 170, 100, 80, 80, 80, 150, 100)):
+        for c, width in enumerate((0, 150, 90, 46, 46, 70, 140)):
             if width:
                 t.setColumnWidth(c, width)
         t.setWordWrap(False)
@@ -224,11 +224,12 @@ class MainWindow(QMainWindow):
             miss = s.missing_count
             values = [s.name, s.author, s.kind, _have(s, AUDIO), _have(s, EBOOK),
                       (str(miss) if miss else ("✓" if s.checked else "")),
-                      (f"#{fmt_index(nxt.index)}  {nxt.release}" if nxt else ""), s.checked[:10]]
+                      (f"#{fmt_index(nxt.index)}  {nxt.release}" if nxt else "")]
             for c, val in enumerate(values):
                 it = _Item(val)
                 if c == 0:
                     it.setData(Qt.UserRole, s.key)
+                    it.setToolTip(f"{s.name}\n{s.author} · {len(s.owned)} books")
                 if c == 5:
                     it.setData(Qt.UserRole + 1, miss)
                     it.setForeground(QColor(p.problem if miss else p.ready))
@@ -279,6 +280,8 @@ class MainWindow(QMainWindow):
             extra.append(f"⚠ {s.links['errors']}")
         if not s.checked:
             extra.append("Not checked online yet - click Check online")
+        else:
+            extra.append(f"checked {s.checked.replace('T', ' ')}")
         self.info.setText(" · ".join(x for x in [s.kind, links, *extra] if x))
         have = {f: {} for f in (AUDIO, EBOOK)}
         for o in s.owned:
