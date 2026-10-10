@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QButtonGroup, QGridLayout, QSc
                                QTabWidget, QToolButton, QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QFrame,
                                QHBoxLayout, QHeaderView, QLabel, QLineEdit, QListWidget, QListWidgetItem,
                                QMainWindow, QMessageBox, QPlainTextEdit, QProgressBar, QPushButton, QSplitter,
-                               QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget, QCheckBox, QComboBox)
+                               QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget, QCheckBox, QComboBox, QTabBar)
 
 from .. import __version__
 from ..config import STATE, Settings, load_settings, save_settings
@@ -32,7 +32,7 @@ CALENDAR_COLS = ["Date", "Series", "#", "Title", "Author", "You have"]
 KIND_FILTERS = [("Audiobooks", "audiobook"), ("Light novels", "light novel"), ("EBooks", "ebook"),
                 ("Manga", "manga")]
 SERIES_COLS = ["Series", "Author", "Kind", "🎧", "📖", "Missing", "Next release"]
-VOLUME_COLS = ["#", "Title", "🎧", "📖", "Release"]
+VOLUME_COLS = ["#", "Title", "Have", "Release"]  # 'Have' is 🎧 or 📖 - the tab's format
 
 
 class _Signals(QObject):
@@ -315,6 +315,13 @@ class MainWindow(QMainWindow):
         self.net = QNetworkAccessManager(self)
         self.net.finished.connect(self._cover_loaded)
         self._cover_for = ""
+        self.fmt_tabs = QTabBar()
+        self.fmt_tabs.setExpanding(False)
+        self.fmt_tabs.setDrawBase(False)
+        self.fmt_tabs.currentChanged.connect(self._show_tab)
+        v.addWidget(self.fmt_tabs)
+        self._tabs: list[tuple[Series, str]] = []  # (series, format) per tab
+        self._shown: Series | None = None           # the series of the open tab
         t = self.volumes = QTableWidget(0, len(VOLUME_COLS))
         t.setHorizontalHeaderLabels(VOLUME_COLS)
         t.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -323,7 +330,7 @@ class MainWindow(QMainWindow):
         t.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         t.setWordWrap(False)
         t.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
-        for c in (0, 2, 3, 4):
+        for c in (0, 2, 3):
             t.horizontalHeader().setSectionResizeMode(c, QHeaderView.ResizeToContents)
         t.itemDoubleClicked.connect(self._open_volume)
         t.itemSelectionChanged.connect(self._volume_cover)
@@ -433,22 +440,67 @@ class MainWindow(QMainWindow):
                 self.table.selectRow(r)
                 return
 
+    def _family(self, s: Series) -> list[tuple[str, Series, str]]:
+        """The tabs for a series: its audiobooks, its light novels / ebooks, and its manga (the same series under
+        another key) - only the ones it has, owned or known online."""
+        base = s.key.split("|")[0]
+        novel, manga = self.series.get(base), self.series.get(base + "|manga")
+        tabs = []
+        if novel is not None:
+            if any(o.fmt == AUDIO for o in novel.owned) or novel.audible:
+                tabs.append(("🎧 Audiobook", novel, AUDIO))
+            if any(o.fmt == EBOOK for o in novel.owned) or (novel.kind == "light novel" and novel.known(EBOOK)):
+                tabs.append(("📖 Light novel" if novel.kind == "light novel" else "📖 Ebook", novel, EBOOK))
+        if manga is not None:
+            tabs.append(("🗯 Manga", manga, EBOOK))
+        return tabs or [("📖 Ebook", s, EBOOK)]
+
     def show_series(self) -> None:
         key = self._selected_key()
         s = self.series.get(key) if key else None
-        t = self.volumes
         if s is None:
+            self._shown, self._tabs = None, []
             self.heading.setText("Select a series")
             self.info.clear()
             self.cover.clear()
-            t.setRowCount(0)
+            self.volumes.setRowCount(0)
+            self.fmt_tabs.blockSignals(True)
+            while self.fmt_tabs.count():
+                self.fmt_tabs.removeTab(0)
+            self.fmt_tabs.blockSignals(False)
             return
+        family = self._family(s)
+        cur = self.fmt_tabs.currentIndex()
+        keep = (self._tabs[cur][0].key, self._tabs[cur][1]) if 0 <= cur < len(self._tabs) else None
+        self.fmt_tabs.blockSignals(True)
+        while self.fmt_tabs.count():
+            self.fmt_tabs.removeTab(0)
+        self._tabs = []
+        for label, ser, fmt in family:
+            self.fmt_tabs.addTab(label)
+            self._tabs.append((ser, fmt))
+        # the same tab again (after a refresh), else the clicked row's own series: manga row -> the manga tab
+        pick = next((i for i, (ser, fmt) in enumerate(self._tabs) if keep and (ser.key, fmt) == keep
+                     and ser.key.split("|")[0] == s.key.split("|")[0]), None)
+        if pick is None:
+            pick = next((i for i, (ser, _) in enumerate(self._tabs) if ser.key == s.key), 0)
+        self.fmt_tabs.setCurrentIndex(pick)
+        self.fmt_tabs.setVisible(len(self._tabs) > 1)
+        self.fmt_tabs.blockSignals(False)
+        self._show_tab(pick)
+
+    def _show_tab(self, index: int) -> None:
+        if not (0 <= index < len(self._tabs)):
+            return
+        s, fmt = self._tabs[index]
+        self._shown = s
+        t = self.volumes
         self.heading.setText(f"{s.name} — {s.author}")
         accent = theme._current.accent  # noqa: SLF001
         links = " · ".join(f'<a href="{u}" style="color:{accent}">{n}</a>' for n, u in s.links.items()
                            if n != "errors" and u)
         extra = []
-        if s.total_hint:
+        if s.total_hint and fmt == EBOOK:
             extra.append(f"AniList: {s.total_hint} volumes ({s.status.lower()})")
             more = s.anilist_unlisted(EBOOK)
             if more:
@@ -464,37 +516,37 @@ class MainWindow(QMainWindow):
             cb.blockSignals(True)
             cb.setChecked(f in s.formats)
             cb.blockSignals(False)
-        first = min((o for o in s.owned), key=lambda o: o.index if o.index is not None else 9999, default=None)
+        mine = [o for o in s.owned if o.fmt == fmt]
+        first = min(mine or s.owned, key=lambda o: o.index if o.index is not None else 9999, default=None)
         self._show_cover(first, next(iter(sorted(s.audible.items())), (None, None))[1])
-        have = {f: {} for f in (AUDIO, EBOOK)}
-        for o in s.owned:
+        have: dict[float, object] = {}
+        for o in mine:
             if (i := s.index_of(o)) is not None:
-                have[o.fmt].setdefault(i, o)
-        indexes = sorted(set(s.known(AUDIO)) | set(s.known(EBOOK)) | set(have[AUDIO]) | set(have[EBOOK]))
+                have.setdefault(i, o)
+        known = s.known(fmt)
+        indexes = sorted(set(known) | set(have))
+        t.setHorizontalHeaderLabels(["#", "Title", "🎧" if fmt == AUDIO else "📖", "Release"])
         p = theme._current  # noqa: SLF001
         t.setRowCount(len(indexes))
         for r, i in enumerate(indexes):
-            vol = s.audible.get(i) or s.others.get(i) or s.known(EBOOK).get(i)
-            owned = have[AUDIO].get(i) or have[EBOOK].get(i)
+            vol = known.get(i) or s.audible.get(i) or s.others.get(i)
+            owned = have.get(i)
             title = (owned.title if owned else "") or (vol.title if vol else "")
-            cells = []
-            for f in (AUDIO, EBOOK):
-                o = have[f].get(i)
-                if o is not None:
-                    cells.append("✓" + (" ✔" if o.finished else ""))
-                elif f in s.formats and i in s.known(f) and not (vol and vol.upcoming):
-                    cells.append("missing")
-                else:
-                    cells.append("")
+            if owned is not None:
+                cell = "✓" + (" ✔" if owned.finished else "")
+            elif fmt in s.formats and i in known and not (vol and vol.upcoming):
+                cell = "missing"
+            else:
+                cell = ""
             where = owned.source if owned else ""
             upcoming = bool(vol and vol.upcoming and not owned)
-            row = [fmt_index(i), title, *cells, vol.release if vol else ""]
+            row = [fmt_index(i), title, cell, vol.release if vol else ""]
             for c, val in enumerate(row):
                 it = QTableWidgetItem(val)
                 it.setToolTip(f"{title}\n{where}" if where else title)
                 if c == 0:
                     it.setData(Qt.UserRole, (vol.url if vol else "") or (owned.path if owned else ""))
-                if "missing" in cells:
+                if cell == "missing":
                     it.setForeground(QColor(p.problem))
                 elif upcoming:
                     it.setForeground(QColor(p.check))
@@ -502,8 +554,7 @@ class MainWindow(QMainWindow):
 
     # -- covers ----------------------------------------------------------------------------------------
     def _volume_cover(self) -> None:
-        key = self._selected_key()
-        s = self.series.get(key) if key else None
+        s = self._shown
         rows = self.volumes.selectionModel().selectedRows()
         if s is None or not rows:
             return
@@ -551,8 +602,7 @@ class MainWindow(QMainWindow):
             self.cover.setPixmap(pix.scaled(150, 150, Qt.KeepAspectRatio, Qt.SmoothTransformation))
 
     def _track_changed(self) -> None:
-        key = self._selected_key()
-        s = self.series.get(key) if key else None
+        s = self._shown
         if s is None:
             return
         chosen = [f for cb, f in ((self.track_audio, AUDIO), (self.track_ebook, EBOOK)) if cb.isChecked()]
@@ -631,9 +681,8 @@ class MainWindow(QMainWindow):
         self._run(work, done, f"Checking {len(todo)} series online…")
 
     def check_selected(self) -> None:
-        key = self._selected_key()
-        if key and (s := self.series.get(key)):
-            self.check_online([s])
+        if self._shown is not None:
+            self.check_online([self._shown])
 
     def hide_selected(self) -> None:
         key = self._selected_key()
