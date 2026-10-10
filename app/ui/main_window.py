@@ -31,7 +31,7 @@ ALONE_COLS = ["Title", "Author", "Kind", "Format", "Where", "Read"]
 CALENDAR_COLS = ["Date", "Series", "#", "Title", "Author", "You have"]
 KIND_FILTERS = [("Audiobooks", "audiobook"), ("Light novels", "light novel"), ("EBooks", "ebook"),
                 ("Manga", "manga")]
-SERIES_COLS = ["Series", "Author", "🎧", "LN", "M", "E", "Missing", "Next release"]
+SERIES_COLS = ["Series", "Author", "🎧", "📖 LN", "🗯 M", "📘 E", "Missing", "Next release"]
 SERIES_TIPS = {2: "Audiobooks you have", 3: "Light novels you have (ebooks)", 4: "Manga you have",
                5: "Ebooks you have (not light novels)"}
 COL_MISSING, COL_NEXT = 6, 7
@@ -198,7 +198,7 @@ class MainWindow(QMainWindow):
         head = t.horizontalHeader()
         head.setSectionResizeMode(QHeaderView.Interactive)
         head.setSectionResizeMode(0, QHeaderView.Stretch)  # the series name gets the room
-        for c, width in enumerate((0, 150, 46, 46, 46, 46, 100, 140)):
+        for c, width in enumerate((0, 150, 50, 72, 64, 60, 110, 140)):
             if width:
                 t.setColumnWidth(c, width)
         t.setWordWrap(False)
@@ -792,7 +792,8 @@ def _book_type(s: Series) -> str:
 
 def _missing_text(s: Series) -> str:
     """'🎧 2  LN 4' - what is missing of which format."""
-    parts = [f"{icon} {n}" for icon, n in (("🎧", len(s.missing(AUDIO))), (_book_type(s), len(s.missing(EBOOK)))) if n]
+    label = {"LN": "📖 LN", "M": "🗯 M", "E": "📘 E"}[_book_type(s)]
+    parts = [f"{icon} {n}" for icon, n in (("🎧", len(s.missing(AUDIO))), (label, len(s.missing(EBOOK)))) if n]
     return "  ".join(parts)
 
 
