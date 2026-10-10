@@ -31,10 +31,11 @@ ALONE_COLS = ["Title", "Author", "Kind", "Format", "Where", "Read"]
 CALENDAR_COLS = ["Date", "Series", "#", "Title", "Author", "You have"]
 KIND_FILTERS = [("Audiobooks", "audiobook"), ("Light novels", "light novel"), ("EBooks", "ebook"),
                 ("Manga", "manga")]
-SERIES_COLS = ["Series", "Author", "🎧", "📖 LN", "🗯 M", "📘 E", "Missing", "Next release"]
-SERIES_TIPS = {2: "Audiobooks you have", 3: "Light novels you have (ebooks)", 4: "Manga you have",
-               5: "Ebooks you have (not light novels)"}
-COL_MISSING, COL_NEXT = 6, 7
+SERIES_COLS = ["Series", "Author", "🎧 A", "📖 LN", "🗯 M", "📘 E", "Next release"]
+SERIES_TIPS = {2: "Audiobooks: you have · ✗ missing", 3: "Light novels (ebooks): you have · ✗ missing",
+               4: "Manga: you have · ✗ missing",
+               5: "Ebooks (not light novels): you have · ✗ missing"}
+COL_NEXT = 6
 VOLUME_COLS = ["#", "Title", "Have", "Release"]  # 'Have' is 🎧 or 📖 - the tab's format
 
 
@@ -104,14 +105,14 @@ class MainWindow(QMainWindow):
         """The series list sorts like you left it (column + direction), saved on every header click."""
         header = self.table.horizontalHeader()
         try:
-            col = int(ui_settings().value("series_sort_column", 0))
+            col = int(ui_settings().value("series_sort_col", 0))
             order = Qt.SortOrder(int(ui_settings().value("series_sort_order", int(Qt.AscendingOrder.value))))
         except (TypeError, ValueError):
             col, order = 0, Qt.AscendingOrder
         if 0 <= col < self.table.columnCount():
             self.table.sortByColumn(col, order)
         header.sortIndicatorChanged.connect(
-            lambda c, o: (ui_settings().setValue("series_sort_column", c),
+            lambda c, o: (ui_settings().setValue("series_sort_col", c),
                           ui_settings().setValue("series_sort_order", int(o.value))))
 
     # -- layout ------------------------------------------------------------------------------------
@@ -200,15 +201,15 @@ class MainWindow(QMainWindow):
         head.setStretchLastSection(False)
         t.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)  # wider than the window: scroll to the right
         t.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel)
-        widths = ui_settings().value("series_widths")
+        widths = ui_settings().value("series_col_widths")
         try:
             widths = [int(w) for w in widths] if widths and len(widths) == len(SERIES_COLS) else None
         except (TypeError, ValueError):
             widths = None
-        for c, width in enumerate(widths or (360, 160, 50, 72, 64, 60, 110, 140)):
+        for c, width in enumerate(widths or (360, 160, 80, 80, 72, 72, 140)):
             t.setColumnWidth(c, width)
         head.sectionResized.connect(lambda *_: ui_settings().setValue(
-            "series_widths", [t.columnWidth(c) for c in range(t.columnCount())]))
+            "series_col_widths", [t.columnWidth(c) for c in range(t.columnCount())]))
         t.setWordWrap(False)
         t.itemSelectionChanged.connect(self.show_series)
         return t
@@ -409,27 +410,36 @@ class MainWindow(QMainWindow):
         p = theme._current  # noqa: SLF001 - the theme's colours
         for r, s in enumerate(rows):
             nxt = s.next_release
-            miss = s.missing_count
             book = _book_type(s)
-            values = [s.name, s.author, _have(s, AUDIO), *(_have(s, EBOOK) if book == b else "" for b in ("LN", "M", "E")),
-                      (_missing_text(s) if miss else ("✓" if s.checked else "")),
-                      (f"#{fmt_index(nxt.index)}  {nxt.release}" if nxt else "")]
+            values = [s.name, s.author]
+            cells = [("A", AUDIO), ("LN", EBOOK), ("M", EBOOK), ("E", EBOOK)]
             for c, val in enumerate(values):
                 it = _Item(val)
                 if c == 0:
                     it.setData(Qt.UserRole, s.key)
                     it.setToolTip(f"{s.name}\n{s.author} · {len(s.owned)} books")
-                if c == COL_MISSING:
-                    it.setData(Qt.UserRole + 1, miss)  # sorts by the total
-                    it.setForeground(QColor(p.problem if miss else p.ready))
-                    if miss:
-                        a, e = len(s.missing(AUDIO)), len(s.missing(EBOOK))
-                        word = {"LN": "light novel(s)", "M": "manga", "E": "ebook(s)"}[book]
-                        it.setToolTip("\n".join(x for x in (f"{a} audiobook(s) missing" if a else "",
-                                                            f"{e} {word} missing" if e else "") if x))
-                if c == COL_NEXT and nxt:
-                    it.setForeground(QColor(p.check))
                 t.setItem(r, c, it)
+            for c, (kind, fmt) in enumerate(cells, start=2):
+                text, have, miss = "", 0, 0
+                if kind == "A" or kind == book:
+                    have, miss = len(s.have(fmt)), len(s.missing(fmt))
+                    if have or miss:
+                        text = f"{have}" if have else "0"
+                        text += f"  ✗{miss}" if miss else ("  ✓" if s.checked else "")
+                it = _Item(text)
+                it.setData(Qt.UserRole + 1, miss * 10_000 + have if text else -1)  # most missing first, then most owned
+                if miss:
+                    it.setForeground(QColor(p.problem))
+                    word = {"A": "audiobook(s)", "LN": "light novel(s)", "M": "manga", "E": "ebook(s)"}[kind]
+                    it.setToolTip(f"you have {have} · {miss} {word} missing")
+                elif text and s.checked:
+                    it.setForeground(QColor(p.ready))
+                    it.setToolTip(f"you have {have} - all of them")
+                t.setItem(r, c, it)
+            it = _Item(f"#{fmt_index(nxt.index)}  {nxt.release}" if nxt else "")
+            if nxt:
+                it.setForeground(QColor(p.check))
+            t.setItem(r, COL_NEXT, it)
         t.setSortingEnabled(True)
         self._select(keep)
         self._totals()
@@ -799,12 +809,6 @@ def _book_type(s: Series) -> str:
     """The books of a series as a column: LN (light novel), M (manga / comic) or E (other ebooks)."""
     return "M" if s.kind in ("manga", "comic") or s.key.endswith("|manga") else "LN" if s.kind == "light novel" else "E"
 
-
-def _missing_text(s: Series) -> str:
-    """'🎧 2  LN 4' - what is missing of which format."""
-    label = {"LN": "📖 LN", "M": "🗯 M", "E": "📘 E"}[_book_type(s)]
-    parts = [f"{icon} {n}" for icon, n in (("🎧", len(s.missing(AUDIO))), (label, len(s.missing(EBOOK)))) if n]
-    return "  ".join(parts)
 
 
 class _Item(QTableWidgetItem):
