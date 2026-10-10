@@ -124,3 +124,15 @@ def test_side_stories_are_another_series():
     assert _names_other_series(_p("Adachi and Shimamura: Short Stories"), "X", "Adachi and Shimamura")
     assert not _names_other_series(_p("Adachi and Shimamura, Vol. 12"), "X", "Adachi and Shimamura")
     assert not _names_other_series(_p("Adachi and Shimamura: Short Stories 2"), "X", "Adachi and Shimamura: Short Stories")
+
+
+def test_a_box_set_counts_for_its_volumes():
+    from app.core.models import Owned, Series, Volume
+    s = Series("c", "Chaos of the Covenant", "M.R. Forbes", "audiobook")
+    s.audible = {float(i): Volume(float(i), f"v{i}") for i in range(1, 8)}
+    s.track = ["audio"]
+    s.owned = [Owned("Hell's Rejects, Books 1-4", ["M.R. Forbes"], "Chaos of the Covenant", 1.0, "audio", "audiobook",
+                     "ABS", path=r"H:\A\M.R. Forbes\Chaos of the Covenant\1-4 - Hell's Rejects, Books 1-4"),
+               Owned("Damned If You Don't", ["M.R. Forbes"], "Chaos of the Covenant", 5.0, "audio", "audiobook", "ABS")]
+    assert s.have("audio") == {1.0, 2.0, 3.0, 4.0, 5.0}
+    assert [v.index for v in s.missing("audio")] == [6.0, 7.0]

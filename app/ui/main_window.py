@@ -610,7 +610,7 @@ class MainWindow(QMainWindow):
         self._show_cover(first, next(iter(sorted(s.audible.items())), (None, None))[1])
         have: dict[float, object] = {}
         for o in mine:
-            if (i := s.index_of(o)) is not None:
+            for i in s.numbers_of(o):  # a box set ('Books 1-4') counts for each of its volumes
                 have.setdefault(i, o)
         known = s.known(fmt)
         indexes = sorted(set(known) | set(have))
@@ -652,7 +652,7 @@ class MainWindow(QMainWindow):
             i = float(self.volumes.item(rows[0].row(), 0).text())
         except ValueError:
             return
-        owned = next((o for o in s.owned if s.index_of(o) == i), None)
+        owned = next((o for o in s.owned if i in s.numbers_of(o)), None)
         self._show_cover(owned, s.audible.get(i))
 
     def _show_cover(self, owned, vol) -> None:

@@ -85,8 +85,20 @@ class Series:
                 return hit
         return o.index
 
+    def numbers_of(self, o: Owned) -> set[float]:
+        """The volumes one copy holds: its number - or all of a box set ('Hell's Rejects, Books 1-4', or the
+        folder '1-4 - Hell's Rejects' -> 1, 2, 3, 4)."""
+        i = self.index_of(o)
+        out = {i} if i is not None else set()
+        folders = re.split(r"[\\/]", (o.path or "").rstrip("\\/"))[-2:]
+        m = re.search(r"(?i)\bbooks?\s+(\d+)\s*-\s*(\d+)\b", o.title or "") or next(
+            (m for f in reversed(folders) if (m := re.match(r"^(\d+)-(\d+) - ", f))), None)
+        if m and int(m.group(1)) < int(m.group(2)) <= int(m.group(1)) + 30:
+            out |= {float(n) for n in range(int(m.group(1)), int(m.group(2)) + 1)}
+        return out
+
     def have(self, fmt: str) -> set[float]:
-        return {i for o in self.owned if o.fmt == fmt and (i := self.index_of(o)) is not None}
+        return {i for o in self.owned if o.fmt == fmt for i in self.numbers_of(o)}
 
     @property
     def formats(self) -> set[str]:
@@ -101,7 +113,7 @@ class Series:
         out = dict(self.others)
         for i, v in self.audible.items():  # an audiobook volume exists as a book too
             out.setdefault(i, v)
-        owned = [i for o in self.owned if (i := self.index_of(o)) is not None]
+        owned = [i for o in self.owned for i in self.numbers_of(o)]
         hint = self._whole_hint(out, owned)
         # gaps up to the last volume - but not up to an odd one far out ('Adachi and Shimamura, Vol. 99.9')
         nums = sorted({*out, *owned})
