@@ -284,7 +284,9 @@ class Lookup:
 
     # -- Google Books --------------------------------------------------------------------------
     def google_volumes(self, s: Series) -> None:
-        q = f'intitle:"{s.name}"' + (f' inauthor:"{s.author}"' if s.author else "")
+        # a plain search: Google finds nothing for intitle:"..." inauthor:"..." on many light novels
+        name = re.sub(r"(?i)\s*\((?:manga|comic|light novel)\)$", "", s.name)
+        q = f"{name} {s.author or ''}".strip()
         params = {"q": q, "maxResults": 40, "printType": "books", "langRestrict": "en"}
         if self.settings.google_books_key:
             params["key"] = self.settings.google_books_key
