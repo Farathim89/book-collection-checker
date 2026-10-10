@@ -71,6 +71,7 @@ class Lookup:
         self.audible = Http(cache, min_interval=0.3)
         self.anilist = Http(cache, min_interval=2.2)  # AniList allows about 30 a minute now
         self.google = Http(cache, min_interval=1.2)
+        self.openlib = Http(cache, min_interval=1.0)  # OpenLibrary: free, no key
         self.google_busy = False  # Google said 'too many requests': no more Google this round
         tld = TLDS.get(settings.audible_region, "com")
         self.api = f"https://api.audible.{tld}/1.0/catalog/products"
@@ -91,7 +92,11 @@ class Lookup:
                     self.anilist_manga(s)  # is there a manga of it (to show, even when you have none)
             except (OSError, ValueError, KeyError) as e:
                 notes.append(f"AniList: {e}")
-        if self.settings.use_google and "ebook" in s.formats and not s.audible and not s.total_hint                 and not self.google_busy:
+        # Google: ebooks you collect that nobody else lists - and a light novel whose AniList entry has no
+        # volume count yet (still running), so its book tab has volumes to show
+        if self.settings.use_google and not s.total_hint and (
+                ("ebook" in s.formats and not s.audible) or (s.kind == "light novel" and s.links.get("AniList"))) \
+                and not self.google_busy:
             try:
                 self.google_volumes(s)
             except (OSError, ValueError, KeyError) as e:
@@ -99,6 +104,11 @@ class Lookup:
                     self.google_busy = True  # quietly: the next check asks again
                 else:
                     notes.append(f"Google: {e}")
+        if s.audible and not s.others and not s.total_hint and not s.key.endswith("|manga"):
+            try:
+                self.openlibrary_books(s)  # which of Audible's volumes exist as books too
+            except (OSError, ValueError, KeyError) as e:
+                notes.append(f"OpenLibrary: {e}")
         s.checked = dt.datetime.now().isoformat(timespec="minutes")
         if notes:
             s.links["errors"] = "; ".join(notes)
@@ -248,6 +258,29 @@ class Lookup:
                 s.links["AniList manga"] = m.get("siteUrl") or ""
                 return
         s.manga_hint = None
+
+    # -- OpenLibrary ---------------------------------------------------------------------------
+    def openlibrary_books(self, s: Series) -> None:
+        """Audible's volumes that exist as books: the same title by the same author on OpenLibrary ('Carl's
+        Doomsday Scenario' - Dungeon Crawler Carl #2). Free, no key - fills the series' book tab."""
+        if not s.author:
+            return
+        data = self.openlib.get_json("https://openlibrary.org/search.json", {
+            "author": s.author, "limit": 200, "fields": "key,title,first_publish_year"})
+        works = {}
+        for d in data.get("docs") or []:
+            title = re.sub(r"\s*\(duplicate of [^)]*\)", "", d.get("title") or "", flags=re.I)
+            if title and not re.search(r"(?i)graphic novel|\(manga\)|comic", title):
+                works.setdefault(_norm(title), d)
+        for i, v in s.audible.items():
+            want = _norm(re.sub(r"(?i)\s*[:(,]\s*(?:book|vol(?:ume)?\.?)\s*[\d.]+.*$", "", v.title or ""))
+            hit = works.get(want) or next((d for k, d in works.items() if want and len(want) >= 8
+                                            and (k.startswith(want) or want.startswith(k) and len(k) >= 8)), None)
+            if hit:
+                s.others.setdefault(i, Volume(i, hit.get("title") or v.title, str(hit.get("first_publish_year") or ""),
+                                              url=f"https://openlibrary.org{hit.get('key', '')}", source="openlibrary"))
+        if s.others:
+            s.links.setdefault("OpenLibrary", f"https://openlibrary.org/search?author={s.author}")
 
     # -- Google Books --------------------------------------------------------------------------
     def google_volumes(self, s: Series) -> None:

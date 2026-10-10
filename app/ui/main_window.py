@@ -495,11 +495,12 @@ class MainWindow(QMainWindow):
         if novel is not None:  # what exists - also the formats you don't have (shown, counted only if you collect them)
             if any(o.fmt == AUDIO for o in novel.owned) or novel.audible:
                 tabs.append(("🎧 Audiobook", novel, AUDIO))
-            # the books: only when you have some or an online source lists them (AniList / Google) - an
-            # audiobook alone doesn't prove there are ebooks
-            if any(o.fmt == EBOOK for o in novel.owned) or novel.others or novel.total_hint:
+            # the books: when you have some, or an online source found them (AniList - also without a volume
+            # count yet - or Google) - an audiobook alone doesn't prove there are ebooks
+            if any(o.fmt == EBOOK for o in novel.owned) or novel.others or novel.total_hint \
+                    or novel.links.get("AniList"):
                 tabs.append(("📖 Light novel" if novel.kind == "light novel" else "📖 Ebook", novel, EBOOK))
-        if manga is None and novel is not None and novel.manga_hint:  # AniList knows its volumes
+        if manga is None and novel is not None and novel.manga_hint is not None:  # AniList found its manga
             # a manga you don't have: AniList's volumes, nothing counted as missing
             manga = Series(base + "|manga", f"{novel.name} (Manga)", novel.author, "manga",
                            total_hint=novel.manga_hint or None, checked=novel.checked,
@@ -560,6 +561,8 @@ class MainWindow(QMainWindow):
                 extra.append(f"{more} more not listed here (AniList counts side volumes like .5 too)")
         if s.key not in self.series:  # a manga of this series you don't have
             extra.append("you don't have it - shown, not counted")
+        if fmt == EBOOK and not s.known(EBOOK) and not mine_any(s, EBOOK):
+            extra.append("found on AniList - still running, no volume count yet")
         elif not mine_any(s, fmt) and fmt not in s.formats:
             extra.append("you don't have these - shown, not counted (tick it below to collect it)")
         if s.links.get("errors"):
