@@ -147,3 +147,12 @@ def test_a_wrong_asin_in_your_library_does_not_move_a_volume():
     part = Owned("Vol. 6 Part One", ["R"], "Mushoku Tensei", 6.1, "audio", "light novel", "ABS", asin="A6")
     s.owned = [o1, o2, part]
     assert (s.index_of(o1), s.index_of(o2), s.index_of(part)) == (1.0, 2.0, 6.0)
+
+
+def test_a_trilogy_counts_for_three():
+    from app.core.models import Owned, Series, Volume
+    s = Series("p", "Pangea Online", "S.L. Rowland", "audiobook")
+    s.audible = {float(i): Volume(float(i), f"v{i}") for i in (1, 2, 3)}
+    s.owned = [Owned("Pangea Online: The Complete Trilogy", ["S.L. Rowland"], "Pangea Online", 1.0, "audio",
+                     "audiobook", "ABS", path=r"H:\A\S.L. Rowland\Pangea Online\1 - Pangea Online - The Complete Trilogy")]
+    assert s.have("audio") == {1.0, 2.0, 3.0} and s.missing("audio") == []

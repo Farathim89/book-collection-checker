@@ -97,6 +97,10 @@ class Series:
             (m for f in reversed(folders) if (m := re.match(r"^(\d+)-(\d+) - ", f))), None)
         if m and int(m.group(1)) < int(m.group(2)) <= int(m.group(1)) + 30:
             out |= {float(n) for n in range(int(m.group(1)), int(m.group(2)) + 1)}
+        elif (n := box_size(f"{o.title or ''} {folders[-1] if folders else ''}")) and not box_size(o.series or ""):
+            # 'Pangea Online: The Complete Trilogy' - but not every book of 'The Earthsea Quartet'
+            start = int(i) if i is not None else 1
+            out |= {float(k) for k in range(start, start + n)}
         return out
 
     def have(self, fmt: str) -> set[float]:
@@ -175,3 +179,12 @@ class Series:
         s.links, s.checked = d.get("links") or {}, d.get("checked", "")
         s.track = list(d.get("track") or [])
         return s
+
+
+_BOX_WORDS = {"duology": 2, "dilogy": 2, "trilogy": 3, "tetralogy": 4, "quadrilogy": 4, "quartet": 4, "pentalogy": 5}
+
+
+def box_size(text: str) -> int:
+    """How many books a box set holds by its name: 'The Complete Trilogy' -> 3, 'Duology' -> 2 (0: none)."""
+    m = re.search(r"(?i)\b(" + "|".join(_BOX_WORDS) + r")\b", text or "")
+    return _BOX_WORDS[m.group(1).lower()] if m else 0
