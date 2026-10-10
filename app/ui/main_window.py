@@ -5,7 +5,7 @@ import datetime as dt
 import webbrowser
 from pathlib import Path
 
-from PySide6.QtCore import QObject, QRunnable, QSize, Qt, QThreadPool, QUrl, Signal
+from PySide6.QtCore import QObject, QRunnable, QSize, Qt, QThreadPool, QTimer, QUrl, Signal
 from PySide6.QtGui import QColor, QDesktopServices, QGuiApplication, QIcon, QPixmap
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 from PySide6.QtWidgets import (QAbstractItemView, QButtonGroup, QGridLayout, QScrollArea, QStackedWidget,
@@ -93,9 +93,22 @@ class MainWindow(QMainWindow):
             self.restoreGeometry(geo)
         for table in (self.table, self.volumes, self.cal, self.alone_table):
             make_copyable(table)
+        self._restore_sort()
         self.fill()
-        if not self.series:
-            self.scan()
+        QTimer.singleShot(0, self.scan)  # every start: what you own now (the online answers are kept)
+
+    def _restore_sort(self) -> None:
+        """The series list sorts like you left it (column + direction), saved on every header click."""
+        header = self.table.horizontalHeader()
+        try:
+            col = int(ui_settings().value("sort_column", 0))
+            order = Qt.SortOrder(int(ui_settings().value("sort_order", int(Qt.AscendingOrder.value))))
+        except (TypeError, ValueError):
+            col, order = 0, Qt.AscendingOrder
+        if 0 <= col < self.table.columnCount():
+            self.table.sortByColumn(col, order)
+        header.sortIndicatorChanged.connect(
+            lambda c, o: (ui_settings().setValue("sort_column", c), ui_settings().setValue("sort_order", int(o.value))))
 
     # -- layout ------------------------------------------------------------------------------------
     def _sidebar(self) -> QWidget:
