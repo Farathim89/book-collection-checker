@@ -196,11 +196,19 @@ class MainWindow(QMainWindow):
         t.setSortingEnabled(True)
         t.verticalHeader().setVisible(False)
         head = t.horizontalHeader()
-        head.setSectionResizeMode(QHeaderView.Interactive)
-        head.setSectionResizeMode(0, QHeaderView.Stretch)  # the series name gets the room
-        for c, width in enumerate((0, 150, 50, 72, 64, 60, 110, 140)):
-            if width:
-                t.setColumnWidth(c, width)
+        head.setSectionResizeMode(QHeaderView.Interactive)  # every column can be dragged wider
+        head.setStretchLastSection(False)
+        t.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)  # wider than the window: scroll to the right
+        t.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel)
+        widths = ui_settings().value("series_widths")
+        try:
+            widths = [int(w) for w in widths] if widths and len(widths) == len(SERIES_COLS) else None
+        except (TypeError, ValueError):
+            widths = None
+        for c, width in enumerate(widths or (360, 160, 50, 72, 64, 60, 110, 140)):
+            t.setColumnWidth(c, width)
+        head.sectionResized.connect(lambda *_: ui_settings().setValue(
+            "series_widths", [t.columnWidth(c) for c in range(t.columnCount())]))
         t.setWordWrap(False)
         t.itemSelectionChanged.connect(self.show_series)
         return t
