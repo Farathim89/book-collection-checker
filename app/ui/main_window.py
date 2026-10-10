@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import re
 import webbrowser
 from pathlib import Path
 
@@ -19,7 +20,7 @@ from ..config import STATE, Settings, load_settings, save_settings
 from ..core import store
 from ..core.collect import collect, group
 from ..core.lookup import TLDS, Lookup, check_all
-from ..core.models import AUDIO, EBOOK, Series, fmt_index
+from ..core.models import AUDIO, EBOOK, Series, fmt_index, series_key
 from ..portable import ui_settings
 from . import theme
 
@@ -387,6 +388,18 @@ class MainWindow(QMainWindow):
             out.append(s)
         return out
 
+    def _rows(self, visible: list[Series]) -> list[list[Series]]:
+        """One row per series: a light novel / audiobook series and its manga together (the M column and the
+        Manga tab); a manga alone when its novel isn't shown (a manga filter) or you have none of it."""
+        groups: dict[tuple[str, str], list[Series]] = {}
+        for s in visible:
+            groups.setdefault((family_key(s), fold_author(s)), []).append(s)
+        out = []
+        for base, group in groups.items():
+            group.sort(key=lambda g: g.key.endswith("|manga"))  # the novel first
+            out.append(group)
+        return out
+
     def fill(self) -> None:
         item = self.menu.currentItem()
         calendar = bool(item and item.data(Qt.UserRole) == ("show", "calendar"))
@@ -405,34 +418,37 @@ class MainWindow(QMainWindow):
         keep = self._selected_key()
         t = self.table
         t.setSortingEnabled(False)
-        rows = self._visible()
+        rows = self._rows(self._visible())
         t.setRowCount(len(rows))
         p = theme._current  # noqa: SLF001 - the theme's colours
-        for r, s in enumerate(rows):
-            nxt = s.next_release
-            book = _book_type(s)
-            values = [s.name, s.author]
-            cells = [("A", AUDIO), ("LN", EBOOK), ("M", EBOOK), ("E", EBOOK)]
-            for c, val in enumerate(values):
+        for r, group in enumerate(rows):
+            main = group[0]  # the novel / audiobook series, else the manga alone
+            ups = [v for g in group if (v := g.next_release)]
+            nxt = min(ups, key=lambda v: v.release) if ups else None
+            name = main.name
+            for c, val in enumerate((name, main.author)):
                 it = _Item(val)
                 if c == 0:
-                    it.setData(Qt.UserRole, s.key)
-                    it.setToolTip(f"{s.name}\n{s.author} · {len(s.owned)} books")
+                    it.setData(Qt.UserRole, main.key)
+                    it.setToolTip(f"{name}\n{main.author} · {sum(len(g.owned) for g in group)} books")
                 t.setItem(r, c, it)
-            for c, (kind, fmt) in enumerate(cells, start=2):
+            for c, kind in enumerate(("A", "LN", "M", "E"), start=2):
+                fmt = AUDIO if kind == "A" else EBOOK
+                ser = next((g for g in group if (kind == "A" and not g.key.endswith("|manga"))
+                            or (kind != "A" and _book_type(g) == kind)), None)
                 text, have, miss = "", 0, 0
-                if kind == "A" or kind == book:
-                    have, miss = len(s.have(fmt)), len(s.missing(fmt))
+                if ser is not None:
+                    have, miss = len(ser.have(fmt)), len(ser.missing(fmt))
                     if have or miss:
                         text = f"{have}" if have else "0"
-                        text += f"  ✗{miss}" if miss else ("  ✓" if s.checked else "")
+                        text += f"  ✗{miss}" if miss else ("  ✓" if ser.checked else "")
                 it = _Item(text)
                 it.setData(Qt.UserRole + 1, miss * 10_000 + have if text else -1)  # most missing first, then most owned
                 if miss:
                     it.setForeground(QColor(p.problem))
                     word = {"A": "audiobook(s)", "LN": "light novel(s)", "M": "manga", "E": "ebook(s)"}[kind]
                     it.setToolTip(f"you have {have} · {miss} {word} missing")
-                elif text and s.checked:
+                elif text and ser.checked:
                     it.setForeground(QColor(p.ready))
                     it.setToolTip(f"you have {have} - all of them")
                 t.setItem(r, c, it)
@@ -461,16 +477,20 @@ class MainWindow(QMainWindow):
     def _select(self, key: str | None) -> None:
         if key is None:
             return
-        for r in range(self.table.rowCount()):
-            if self.table.item(r, 0).data(Qt.UserRole) == key:
-                self.table.selectRow(r)
-                return
+        for want in (key, key.split("|")[0]):  # a manga shares its novel's row
+            for r in range(self.table.rowCount()):
+                if self.table.item(r, 0).data(Qt.UserRole) == want:
+                    self.table.selectRow(r)
+                    return
 
     def _family(self, s: Series) -> list[tuple[str, Series, str]]:
         """The tabs for a series: its audiobooks, its light novels / ebooks, and its manga (the same series under
         another key) - only the ones it has, owned or known online."""
+        fam = family_key(s)
         base = s.key.split("|")[0]
-        novel, manga = self.series.get(base), self.series.get(base + "|manga")
+        kin = [g for g in self.series.values() if family_key(g) == fam and fold_author(g) == fold_author(s)]
+        novel = s if not s.key.endswith("|manga") else next((g for g in kin if not g.key.endswith("|manga")), None)
+        manga = s if s.key.endswith("|manga") else next((g for g in kin if g.key.endswith("|manga")), None)
         tabs = []
         if novel is not None:  # what exists - also the formats you don't have (shown, counted only if you collect them)
             if any(o.fmt == AUDIO for o in novel.owned) or novel.audible:
@@ -967,3 +987,15 @@ class SettingsDialog(QDialog):
 def mine_any(s: Series, fmt: str) -> bool:
     """Do you have any volume of this series in this format?"""
     return any(o.fmt == fmt for o in s.owned)
+
+
+def family_key(s: Series) -> str:
+    """A light novel and its manga as one series: '86--EIGHTY-SIX' / '86--EIGHTY-SIX (Manga)', 'Classroom of the
+    Elite' / 'Classroom of the Elite (Year 1) (Manga)' (the first year / part is the series itself)."""
+    name = re.sub(r"(?i)\s*\((?:manga|comic)\)$", "", s.name)
+    name = re.sub(r"(?i)\s*(?:\(|:|-)\s*(?:year|part|season)\s*1\)?$", "", name)
+    return series_key(name)
+
+
+def fold_author(s: Series) -> str:
+    return re.sub(r"[^a-z0-9]", "", (s.author or "").lower())
