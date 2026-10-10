@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import datetime as dt
 import re
+from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Callable
 
@@ -23,6 +24,36 @@ _VOL_RE = re.compile(r"(?i)(?:\bvol(?:ume)?\.?|\bbook|\bpart|#|,)\s*(\d+(?:\.\d+
 
 def _series_key_loose(name: str) -> str:
     return fold(re.sub(r"(?i)\s+series$|\s*\((?:light novel|novel|manga)\)|^(?:the|an?)\s+", "", name or ""))
+
+
+def _norm(text: str) -> str:
+    """Folded, without 'the' / 'a' / 'an' and shop tags - the same on both sides of a comparison."""
+    return fold(re.sub(r"(?i)\b(?:the|an?)\b|\((?:light novel|novel|manga)\)", " ", text or ""))
+
+
+def _title_names(p: dict, series_name: str) -> bool:
+    """The product's title names this series: 'Head: Tail' -> the tail is in it ('Trapped in a Dating Sim:
+    Otome Games Are Tough for Us, Too!' -> 'otomegamesaretoughforustoo'), else the whole name."""
+    core = _norm((series_name or "").split(":", 1)[-1])
+    return bool(core) and core in _norm(f"{p.get('title') or ''} {p.get('subtitle') or ''}")
+
+
+def _names_other_series(p: dict, series_asin: str, series_name: str) -> bool:
+    """Audible lists a sibling's volume under this series: the title starts with the shared 'Head:' but goes on
+    with another series ('Trapped in a Dating Sim: The World of Otome Games Is Tough for Mobs, Vol. 7' under
+    'Trapped in a Dating Sim: Otome Games Are Tough for Us, Too!')."""
+    if ":" not in (series_name or "") or _title_names(p, series_name):
+        return False
+    head_text, tail_text = series_name.split(":", 1)
+    head, core = _norm(head_text), _norm(tail_text)
+    title = _norm(f"{p.get('title') or ''} {p.get('subtitle') or ''}")
+    if not head or not core or not title.startswith(head) or len(title) <= len(head) + 8:
+        return False
+    rest = title[len(head):len(head) + len(core)]
+    if re.findall(r"\d+", core) and re.findall(r"\d+", core) != re.findall(r"\d+", rest):
+        return True  # 'Year 3' under 'Year 2'
+    # a typo ('Jobless Reincarnatio') is still this series; another name ('The World of ... for Mobs') isn't
+    return SequenceMatcher(None, core, rest).ratio() < 0.75
 
 
 class Lookup:
@@ -69,33 +100,59 @@ class Lookup:
         series_asin = self._find_audible_series(s)
         if not series_asin:
             return
+        products = self._series_products(series_asin)
+        name = next((x.get("title") for p in products for x in p.get("series") or []
+                     if x.get("asin") == series_asin and x.get("title")), s.name)
+        volumes: dict[float, Volume] = {}
+        for p in products:
+            if _names_other_series(p, series_asin, name):
+                continue  # Audible lists a main-series volume under its spin-off too
+            self._add_volume(volumes, p, series_asin)
+        # ... and lists some volumes only under the other series: take the ones whose title names this one
+        siblings = list(dict.fromkeys(x["asin"] for p in products for x in p.get("series") or []
+                                      if x.get("asin") and x["asin"] != series_asin))
+        for sib in siblings[:3]:
+            for p in self._series_products(sib):
+                if _title_names(p, name):
+                    self._add_volume(volumes, p, sib, only_new=True)
+        s.audible = volumes
+        s.links["Audible"] = f"{self.site}/series/{series_asin}"
+
+    def _series_products(self, series_asin: str) -> list[dict]:
         data = self.audible.get_json(f"{self.api}/{series_asin}", {"response_groups": "relationships,product_desc"})
         product = data.get("product") or {}
         kids = [r["asin"] for r in product.get("relationships") or []
                 if r.get("relationship_to_product") == "child" and r.get("relationship_type") == "series"]
-        volumes: dict[float, Volume] = {}
+        out = []
         for i in range(0, len(kids), 50):
             res = self.audible.get_json(self.api, {"asins": ",".join(kids[i:i + 50]),
                                                    "response_groups": "product_desc,series,product_attrs,media",
                                                    "image_sizes": "500"})
-            for p in res.get("products") or []:
-                seq = next((x.get("sequence") for x in p.get("series") or [] if x.get("asin") == series_asin), None)
-                try:
-                    index = float(str(seq).split("-")[0])
-                except (TypeError, ValueError):
-                    continue
-                release = (p.get("release_date") or "")[:10]
-                if release.startswith(_PLACEHOLDER) or (p.get("language") or "english").lower() != "english" \
-                        and self.settings.audible_region in ("us", "uk", "ca", "au", "in"):
-                    continue
-                v = Volume(index, p.get("title") or "", release, p.get("asin") or "",
-                           f"{self.site}/pd/{p.get('asin')}", "audible",
-                           (p.get("product_images") or {}).get("500") or "")
-                old = volumes.get(index)
-                if old is None or (v.release and (not old.release or v.release < old.release)):
-                    volumes[index] = v
-        s.audible = volumes
-        s.links["Audible"] = f"{self.site}/series/{series_asin}"
+            out += res.get("products") or []
+        return out
+
+    def _add_volume(self, volumes: dict[float, Volume], p: dict, series_asin: str, only_new: bool = False) -> None:
+        seq = next((x.get("sequence") for x in p.get("series") or [] if x.get("asin") == series_asin), None)
+        try:
+            index = float(str(seq).split("-")[0])
+        except (TypeError, ValueError):
+            return
+        if only_new:  # from another series' list: its number there ('#27') isn't ours - the title's 'Vol. 11' is
+            m = re.search(r"(?i)\bvol(?:ume)?\.?\s*(\d+(?:\.\d+)?)", f"{p.get('title') or ''} {p.get('subtitle') or ''}")
+            if m:
+                index = float(m.group(1))
+        release = (p.get("release_date") or "")[:10]
+        if release.startswith(_PLACEHOLDER) or (p.get("language") or "english").lower() != "english" \
+                and self.settings.audible_region in ("us", "uk", "ca", "au", "in"):
+            return
+        if only_new and index in volumes:
+            return
+        v = Volume(index, p.get("title") or "", release, p.get("asin") or "",
+                   f"{self.site}/pd/{p.get('asin')}", "audible",
+                   (p.get("product_images") or {}).get("500") or "")
+        old = volumes.get(index)
+        if old is None or (v.release and (not old.release or v.release < old.release)):
+            volumes[index] = v
 
     def _find_audible_series(self, s: Series) -> str | None:
         want = _series_key_loose(s.name)
@@ -113,6 +170,10 @@ class Lookup:
             for x in p.get("series") or []:
                 name = _series_key_loose(x.get("title") or "")
                 if name == want:
+                    return x.get("asin")
+                # Audible's 'The World of Otome Games is Tough for Mobs' = your 'Trapped in a Dating Sim: The
+                # World of Otome Games is Tough for Mobs' (the shared head left out)
+                if ":" in s.name and _norm(x.get("title") or "") == _norm(s.name.split(":", 1)[1]):
                     return x.get("asin")
                 # 'Overlord' ~ Audible's 'Overlord (Light Novel)' - but not 'Mushoku Tensei ... Recollections'
                 # (a spin-off) ~ the main series 'Mushoku Tensei'

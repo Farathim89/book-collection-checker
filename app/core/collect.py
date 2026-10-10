@@ -58,9 +58,23 @@ def from_abs(settings: Settings, log: Progress = lambda _: None) -> list[Owned]:
     return out
 
 
+def split_series(value: str) -> list[str]:
+    """ABS's seriesName: 'A #1, B #5' -> ['A #1', 'B #5']. A comma counts only after a '#number', so
+    'Trapped in a Dating Sim: Otome Games Are Tough for Us, Too! #1' stays one series."""
+    out, cur = [], ""
+    for piece in (value or "").split(", "):
+        cur = f"{cur}, {piece}" if cur else piece
+        if re.search(r"#\s*[\d.]+$", cur):
+            out.append(cur.strip())
+            cur = ""
+    if cur.strip():
+        out.append(cur.strip())
+    return out
+
+
 def _first_series(value: str) -> tuple[str | None, float | None]:
     """'Solo Leveling #2, Yen Audio #5' -> ('Solo Leveling', 2.0)."""
-    first = value.split(", ")[0].strip() if value else ""
+    first = split_series(value)[0] if value else ""
     if not first:
         return None, None
     m = _SERIES_RE.match(first)
