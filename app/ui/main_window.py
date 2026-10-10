@@ -465,9 +465,11 @@ class MainWindow(QMainWindow):
         if novel is not None:  # what exists - also the formats you don't have (shown, counted only if you collect them)
             if any(o.fmt == AUDIO for o in novel.owned) or novel.audible:
                 tabs.append(("🎧 Audiobook", novel, AUDIO))
-            if any(o.fmt == EBOOK for o in novel.owned) or novel.known(EBOOK):
+            # the books: only when you have some or an online source lists them (AniList / Google) - an
+            # audiobook alone doesn't prove there are ebooks
+            if any(o.fmt == EBOOK for o in novel.owned) or novel.others or novel.total_hint:
                 tabs.append(("📖 Light novel" if novel.kind == "light novel" else "📖 Ebook", novel, EBOOK))
-        if manga is None and novel is not None and novel.manga_hint is not None:
+        if manga is None and novel is not None and novel.manga_hint:  # AniList knows its volumes
             # a manga you don't have: AniList's volumes, nothing counted as missing
             manga = Series(base + "|manga", f"{novel.name} (Manga)", novel.author, "manga",
                            total_hint=novel.manga_hint or None, checked=novel.checked,
@@ -522,13 +524,12 @@ class MainWindow(QMainWindow):
                            if n != "errors" and u)
         extra = []
         if s.total_hint and fmt == EBOOK:
-            extra.append(f"AniList: {s.total_hint} volumes ({s.status.lower()})")
+            extra.append(f"AniList: {s.total_hint} volumes" + (f" ({s.status.lower()})" if s.status else ""))
             more = s.anilist_unlisted(EBOOK)
             if more:
                 extra.append(f"{more} more not listed here (AniList counts side volumes like .5 too)")
         if s.key not in self.series:  # a manga of this series you don't have
-            extra.append(f"you don't have it - AniList: {s.total_hint} volumes" if s.total_hint
-                         else "you don't have it - still running on AniList, no volume count yet")
+            extra.append("you don't have it - shown, not counted")
         elif not mine_any(s, fmt) and fmt not in s.formats:
             extra.append("you don't have these - shown, not counted (tick it below to collect it)")
         if s.links.get("errors"):
@@ -558,7 +559,8 @@ class MainWindow(QMainWindow):
         for r, i in enumerate(indexes):
             vol = known.get(i) or s.audible.get(i) or s.others.get(i)
             owned = have.get(i)
-            title = (owned.title if owned else "") or (vol.title if vol else "")
+            title = (owned.title if owned else "") or (vol.title if vol else "") \
+                or (f"Vol. {fmt_index(i)}" + (" (AniList)" if vol and vol.source == "anilist" else ""))
             if owned is not None:
                 cell = "✓" + (" ✔" if owned.finished else "")
             elif fmt in s.formats and i in known and not (vol and vol.upcoming):
