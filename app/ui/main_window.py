@@ -432,19 +432,29 @@ class MainWindow(QMainWindow):
                     it.setData(Qt.UserRole, main.key)
                     it.setToolTip(f"{name}\n{main.author} · {sum(len(g.owned) for g in group)} books")
                 t.setItem(r, c, it)
+            novel = next((g for g in group if not g.key.endswith("|manga")), None)
             for c, kind in enumerate(("A", "LN", "M", "E"), start=2):
                 fmt = AUDIO if kind == "A" else EBOOK
                 ser = next((g for g in group if (kind == "A" and not g.key.endswith("|manga"))
                             or (kind != "A" and _book_type(g) == kind)), None)
-                text, have, miss = "", 0, 0
+                text, have, miss, exists = "", 0, 0, 0
                 if ser is not None:
                     have, miss = len(ser.have(fmt)), len(ser.missing(fmt))
                     if have or miss:
                         text = f"{have}" if have else "0"
                         text += f"  ✗{miss}" if miss else ("  ✓" if ser.checked else "")
+                if not text and novel is not None:  # none of these, but the lookup found them: shown dimmed
+                    exists = _exists_online(novel, kind)
+                    if exists:
+                        text = f"0  ✗{exists}" if exists > 0 else "0  ✗?"
                 it = _Item(text)
-                it.setData(Qt.UserRole + 1, miss * 10_000 + have if text else -1)  # most missing first, then most owned
-                if miss:
+                it.setData(Qt.UserRole + 1, miss * 10_000 + have if text and not exists else -1 if not text else 0)
+                if exists:
+                    it.setForeground(QColor(p.muted))
+                    word = {"A": "audiobooks", "LN": "light novels", "M": "manga", "E": "ebooks"}[kind]
+                    it.setToolTip(f"you have none - {abs(exists) if exists > 0 else 'some'} {word} exist "
+                                  "(not counted; tick it in the series to collect it)")
+                elif miss:
                     it.setForeground(QColor(p.problem))
                     word = {"A": "audiobook(s)", "LN": "light novel(s)", "M": "manga", "E": "ebook(s)"}[kind]
                     it.setToolTip(f"you have {have} · {miss} {word} missing")
@@ -1002,3 +1012,20 @@ def family_key(s: Series) -> str:
 
 def fold_author(s: Series) -> str:
     return re.sub(r"[^a-z0-9]", "", (s.author or "").lower())
+
+
+def _exists_online(novel: Series, kind: str) -> int:
+    """How many volumes of a format you don't have the online lookup found for a series (-1: found, count
+    unknown, 0: nothing): its audiobooks (Audible), its books (AniList / Google / OpenLibrary) in the LN or E
+    column, its manga (AniList)."""
+    if kind == "A":
+        return len(novel.audible) if not any(o.fmt == AUDIO for o in novel.owned) else 0
+    if kind == "M":
+        if novel.manga_hint is None:
+            return 0
+        return novel.manga_hint or -1
+    if kind != _book_type(novel) or any(o.fmt == EBOOK for o in novel.owned):
+        return 0
+    if novel.others or novel.total_hint:
+        return len(novel.known(EBOOK))
+    return -1 if novel.links.get("AniList") else 0
