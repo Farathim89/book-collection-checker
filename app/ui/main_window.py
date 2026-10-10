@@ -437,6 +437,9 @@ class MainWindow(QMainWindow):
         extra = []
         if s.total_hint:
             extra.append(f"AniList: {s.total_hint} volumes ({s.status.lower()})")
+            more = s.anilist_unlisted(EBOOK)
+            if more:
+                extra.append(f"{more} more not listed here (AniList counts side volumes like .5 too)")
         if s.links.get("errors"):
             extra.append(f"⚠ {s.links['errors']}")
         if not s.checked:

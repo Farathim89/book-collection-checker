@@ -101,10 +101,23 @@ class Series:
         for i, v in self.audible.items():  # an audiobook volume exists as a book too
             out.setdefault(i, v)
         owned = [i for o in self.owned if (i := self.index_of(o)) is not None]
-        top = max([*out, float(self.total_hint or 0), *owned], default=0)
+        hint = self._whole_hint(out, owned)
+        top = max([*out, float(hint), *owned], default=0)
         for n in range(1, int(top) + 1):  # 1..N: AniList knows the count, a gap in yours shows too
-            out.setdefault(float(n), Volume(float(n), source="anilist" if n <= (self.total_hint or 0) else "gap"))
+            out.setdefault(float(n), Volume(float(n), source="anilist" if n <= hint else "gap"))
         return out
+
+    def _whole_hint(self, known, owned) -> int:
+        """AniList's count as numbered volumes. It counts side volumes too ('Classroom of the Elite (Year 2)':
+        15 = 12 + 4.5, 9.5, 12.5) - with side volumes in the series it can't say which number is missing,
+        so it adds no rows then (anilist_unlisted tells how many it knows more)."""
+        if any(i != int(i) for i in [*known, *owned]):
+            return 0
+        return self.total_hint or 0
+
+    def anilist_unlisted(self, fmt: str) -> int:
+        """How many volumes AniList counts that aren't in this list (e.g. a .5 volume nobody sells yet)."""
+        return max(0, (self.total_hint or 0) - len(self.known(fmt)))
 
     def missing(self, fmt: str) -> list[Volume]:
         """Released volumes you don't have - only for a format you collect this series in."""

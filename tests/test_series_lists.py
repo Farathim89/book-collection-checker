@@ -49,3 +49,17 @@ def test_the_franchise_list_drops_other_years():
     assert _names_other_series(_p("Classroom of the Elite: Year 3, Vol. 1"), "X", "Classroom of the Elite")
     assert not _names_other_series(_p("Classroom of the Elite, Vol. 11"), "X", "Classroom of the Elite")
     assert not _names_other_series(_p("Classroom of the Elite (Light Novel), Vol. 8"), "X", "Classroom of the Elite")
+
+
+def test_anilist_count_with_side_volumes_adds_no_rows():
+    from app.core.models import Series, Volume
+    s = Series("k", "Classroom of the Elite (Year 2)", "Syougo Kinugasa", "light novel")
+    s.audible = {float(i): Volume(float(i), "v") for i in (*range(1, 11), 4.5, 9.5)}
+    s.total_hint = 15
+    known = s.known("ebook")
+    assert max(known) == 10 and 13.0 not in known
+    assert s.anilist_unlisted("ebook") == 3
+    plain = Series("p", "Overlord", "Kugane Maruyama", "light novel")
+    plain.audible = {1.0: Volume(1.0, "v")}
+    plain.total_hint = 4
+    assert sorted(plain.known("ebook")) == [1, 2, 3, 4]
