@@ -42,7 +42,15 @@ def _names_other_series(p: dict, series_asin: str, series_name: str) -> bool:
     """Audible lists a sibling's volume under this series: the title starts with the shared 'Head:' but goes on
     with another series ('Trapped in a Dating Sim: The World of Otome Games Is Tough for Mobs, Vol. 7' under
     'Trapped in a Dating Sim: Otome Games Are Tough for Us, Too!')."""
-    if ":" not in (series_name or "") or _title_names(p, series_name):
+    if ":" not in (series_name or ""):
+        # 'Classroom of the Elite' (the whole franchise on Audible) holding 'Classroom of the Elite: Year 2,
+        # Vol. 11' - a numbered year / part / season the series name doesn't have is another series
+        title = (p.get("title") or "").strip()
+        if title.lower().startswith((series_name or "").lower()):
+            rest = title[len(series_name):]
+            return bool(re.match(r"(?i)^\s*[:\-–(]\s*(?:year|part|season|arc|book)\s*\d", rest))
+        return False
+    if _title_names(p, series_name):
         return False
     head_text, tail_text = series_name.split(":", 1)
     head, core = _norm(head_text), _norm(tail_text)

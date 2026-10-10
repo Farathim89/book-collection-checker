@@ -31,3 +31,21 @@ def test_a_typo_or_a_short_title_is_still_this_series():
     year3 = _p("Classroom of the Elite: Year 3, Vol. 1")
     assert _names_other_series(year3, "X", "Classroom of the Elite: Year 2")
     assert not _names_other_series(_p("I Had That Same Dream Again"), "X", "The Yoru Sumino Collection")
+
+
+def test_year_2_is_not_a_spelling_of_year_1():
+    from app.core.collect import group
+    from app.core.models import Owned
+    def o(series, i):
+        return Owned(title=f"{series} {i}", authors=["Syougo Kinugasa"], series=series, index=i, fmt="audio",
+                     kind="light novel", source="ABS")
+    series, _ = group([o("Classroom of the Elite", 1), o("Classroom of the Elite (Year 2)", 1),
+                       o("I Got a Cheat Skill in Another World", 1), o("I Got a Cheat Skill in Another World, Too", 2)])
+    assert len(series) == 3
+
+
+def test_the_franchise_list_drops_other_years():
+    assert _names_other_series(_p("Classroom of the Elite: Year 2, Vol. 11"), "X", "Classroom of the Elite")
+    assert _names_other_series(_p("Classroom of the Elite: Year 3, Vol. 1"), "X", "Classroom of the Elite")
+    assert not _names_other_series(_p("Classroom of the Elite, Vol. 11"), "X", "Classroom of the Elite")
+    assert not _names_other_series(_p("Classroom of the Elite (Light Novel), Vol. 8"), "X", "Classroom of the Elite")
