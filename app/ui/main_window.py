@@ -33,11 +33,12 @@ ALONE_COLS = ["Title", "Author", "Kind", "Format", "Where", "Read"]
 CALENDAR_COLS = ["Date", "Series", "#", "Title", "Author", "You have"]
 KIND_FILTERS = [("Audiobooks", "audiobook"), ("Light novels", "light novel"), ("EBooks", "ebook"),
                 ("Manga", "manga")]
-SERIES_COLS = ["Series", "Author", "🎧 A", "📖 LN", "🗯 M", "📘 E", "Next release"]
-SERIES_TIPS = {2: "Audiobooks: you have · ✗ missing", 3: "Light novels (ebooks): you have · ✗ missing",
-               4: "Manga: you have · ✗ missing",
-               5: "Ebooks (not light novels): you have · ✗ missing"}
-COL_NEXT = 6
+SERIES_COLS = ["Series", "Author", "have", "✗", "have", "✗", "have", "✗", "have", "✗", "Next release"]
+SERIES_GROUPS = {2: "🎧 A", 4: "📖 LN", 6: "🗯 M", 8: "📘 E"}  # a type over its 'have' + '✗' columns
+SERIES_TIPS = {2: "Audiobooks you have", 3: "Audiobooks missing", 4: "Light novels you have (ebooks)",
+               5: "Light novels missing", 6: "Manga you have", 7: "Manga missing", 8: "Ebooks you have (not light novels)",
+               9: "Ebooks missing"}
+COL_NEXT = 10
 VOLUME_COLS = ["#", "Title", "Have", "Release"]  # 'Have' is 🎧 or 📖 - the tab's format
 
 
@@ -107,14 +108,14 @@ class MainWindow(QMainWindow):
         """The series list sorts like you left it (column + direction), saved on every header click."""
         header = self.table.horizontalHeader()
         try:
-            col = int(ui_settings().value("series_sort_col", 0))
+            col = int(ui_settings().value("series_sort_c2", 0))
             order = Qt.SortOrder(int(ui_settings().value("series_sort_order", int(Qt.AscendingOrder.value))))
         except (TypeError, ValueError):
             col, order = 0, Qt.AscendingOrder
         if 0 <= col < self.table.columnCount():
             self.table.sortByColumn(col, order)
         header.sortIndicatorChanged.connect(
-            lambda c, o: (ui_settings().setValue("series_sort_col", c),
+            lambda c, o: (ui_settings().setValue("series_sort_c2", c),
                           ui_settings().setValue("series_sort_order", int(o.value))))
 
     # -- layout ------------------------------------------------------------------------------------
@@ -190,9 +191,11 @@ class MainWindow(QMainWindow):
 
     def _series_table(self) -> QTableWidget:
         t = self.table = QTableWidget(0, len(SERIES_COLS))
+        t.setHorizontalHeader(_GroupHeader(t))
         t.setHorizontalHeaderLabels(SERIES_COLS)
         for c, tip in SERIES_TIPS.items():
-            t.horizontalHeaderItem(c).setToolTip(tip)
+            if c < len(SERIES_COLS):
+                t.horizontalHeaderItem(c).setToolTip(tip)
         t.setSelectionBehavior(QAbstractItemView.SelectRows)
         t.setSelectionMode(QAbstractItemView.SingleSelection)
         t.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -203,20 +206,18 @@ class MainWindow(QMainWindow):
         head.setStretchLastSection(False)
         t.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)  # wider than the window: scroll to the right
         t.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel)
-        widths = ui_settings().value("series_col_widths")
+        widths = ui_settings().value("series_widths_c2")
         try:
             widths = [int(w) for w in widths] if widths and len(widths) == len(SERIES_COLS) else None
         except (TypeError, ValueError):
             widths = None
-        for c, width in enumerate(widths or (360, 160, 80, 80, 72, 72, 140)):
+        for c, width in enumerate(widths or (360, 160, 48, 44, 48, 44, 48, 44, 48, 44, 140)):
             t.setColumnWidth(c, width)
         head.sectionResized.connect(lambda *_: ui_settings().setValue(
-            "series_col_widths", [t.columnWidth(c) for c in range(t.columnCount())]))
+            "series_widths_c2", [t.columnWidth(c) for c in range(t.columnCount())]))
         t.setWordWrap(False)
         t.itemSelectionChanged.connect(self.show_series)
-        self._miss_delegate = _MissDelegate(t)
-        for c in range(2, 6):
-            t.setItemDelegateForColumn(c, self._miss_delegate)
+
         return t
 
     def _calendar(self) -> QTableWidget:
@@ -437,35 +438,48 @@ class MainWindow(QMainWindow):
                     it.setToolTip(f"{name}\n{main.author} · {sum(len(g.owned) for g in group)} books")
                 t.setItem(r, c, it)
             novel = next((g for g in group if not g.key.endswith("|manga")), None)
-            for c, kind in enumerate(("A", "LN", "M", "E"), start=2):
+            for k, kind in enumerate(("A", "LN", "M", "E")):
+                c = 2 + 2 * k  # 'have' column; the missing one is next to it
                 fmt = AUDIO if kind == "A" else EBOOK
                 ser = next((g for g in group if (kind == "A" and not g.key.endswith("|manga"))
                             or (kind != "A" and _book_type(g) == kind)), None)
-                text, have, miss, exists = "", 0, 0, 0
+                have, miss, exists = 0, 0, 0
+                have_text = miss_text = ""
                 if ser is not None:
                     have, miss = len(ser.have(fmt)), len(ser.missing(fmt))
                     if have or miss:
-                        text = f"{have}" if have else "0"
-                        text += f"  ✗{miss}" if miss else ("  ✓" if ser.checked else "")
-                if not text and novel is not None:  # none of these, but the lookup found them: shown dimmed
+                        have_text = str(have)
+                        miss_text = f"✗{miss}" if miss else ("✓" if ser.checked else "")
+                if not have_text and novel is not None:  # none of these, but the lookup found them: dimmed
                     exists = _exists_online(novel, kind)
                     if exists:
-                        text = f"0  ✗{exists}" if exists > 0 else "0  ✗?"
-                it = _Item(text)
-                it.setData(Qt.UserRole + 1, miss * 10_000 + have if text and not exists else -1 if not text else 0)
+                        have_text, miss_text = "0", (f"✗{exists}" if exists > 0 else "✗?")
+                word = {"A": "audiobook(s)", "LN": "light novel(s)", "M": "manga", "E": "ebook(s)"}[kind]
                 if exists:
-                    it.setForeground(QColor(p.muted))
-                    word = {"A": "audiobooks", "LN": "light novels", "M": "manga", "E": "ebooks"}[kind]
-                    it.setToolTip(f"you have none - {abs(exists) if exists > 0 else 'some'} {word} exist "
-                                  "(not counted; tick it in the series to collect it)")
+                    tip = (f"you have none - {abs(exists) if exists > 0 else 'some'} {word} exist "
+                           "(not counted; tick it in the series to collect it)")
                 elif miss:
-                    it.setData(MISS_ROLE, True)  # the delegate: the number you have normal, '✗N' red
-                    word = {"A": "audiobook(s)", "LN": "light novel(s)", "M": "manga", "E": "ebook(s)"}[kind]
-                    it.setToolTip(f"you have {have} · {miss} {word} missing")
-                elif text and ser.checked:
-                    it.setForeground(QColor(p.ready))
-                    it.setToolTip(f"you have {have} - all of them")
-                t.setItem(r, c, it)
+                    tip = f"you have {have} · {miss} {word} missing"
+                elif have_text and ser.checked:
+                    tip = f"you have {have} - all of them"
+                else:
+                    tip = ""
+                hv = _Item(have_text)
+                hv.setData(Qt.UserRole + 1, have if have_text else -1)
+                ms = _Item(miss_text)
+                ms.setData(Qt.UserRole + 1, (0 if exists else miss) if miss_text else -1)  # most missing first
+                for it in (hv, ms):
+                    it.setTextAlignment(Qt.AlignCenter)
+                    it.setToolTip(tip)
+                if exists:
+                    hv.setForeground(QColor(p.muted))
+                    ms.setForeground(QColor(p.muted))
+                elif miss:
+                    ms.setForeground(QColor(p.problem))
+                elif miss_text == "✓":
+                    ms.setForeground(QColor(p.ready))
+                t.setItem(r, c, hv)
+                t.setItem(r, c + 1, ms)
             it = _Item(f"#{fmt_index(nxt.index)}  {nxt.release}" if nxt else "")
             if nxt:
                 it.setForeground(QColor(p.check))
@@ -1063,3 +1077,47 @@ class _MissDelegate(QStyledItemDelegate):
         painter.setPen(QColor(p.problem))
         painter.drawText(rect, Qt.AlignVCenter | Qt.AlignLeft, "✗" + rest)
         painter.restore()
+
+
+class _GroupHeader(QHeaderView):
+    """Two header rows: the type ('🎧 A') over its 'have' and '✗' columns; the other columns use both rows."""
+
+    def __init__(self, parent=None):
+        super().__init__(Qt.Horizontal, parent)
+        self.setSectionsClickable(True)
+        self.setHighlightSections(False)
+
+    def sizeHint(self):  # noqa: D102
+        size = super().sizeHint()
+        size.setHeight(size.height() * 2 - 4)
+        return size
+
+    def paintSection(self, painter, rect, index) -> None:  # noqa: D102
+        if any(index in (g, g + 1) for g in SERIES_GROUPS):
+            half = rect.height() // 2
+            rect = rect.adjusted(0, half, 0, 0)  # the label in the lower row; the type is drawn above
+        super().paintSection(painter, rect, index)
+
+    def paintEvent(self, event) -> None:  # noqa: D102
+        super().paintEvent(event)
+        from PySide6.QtGui import QPainter, QPen  # noqa: PLC0415
+        p = theme._current  # noqa: SLF001
+        painter = QPainter(self.viewport())
+        font = painter.font()
+        font.setBold(True)
+        painter.setFont(font)
+        half = self.height() // 2
+        for first, label in SERIES_GROUPS.items():
+            x = self.sectionViewportPosition(first)
+            w = self.sectionSize(first) + self.sectionSize(first + 1)
+            box = self.viewport().rect().adjusted(0, 0, 0, 0)
+            box.setLeft(x)
+            box.setWidth(w)
+            box.setHeight(half)
+            painter.fillRect(box, QColor(p.field))
+            painter.setPen(QPen(QColor(p.border)))
+            painter.drawLine(box.bottomLeft(), box.bottomRight())
+            painter.drawLine(box.topRight(), box.bottomRight())
+            painter.setPen(QColor(p.accent))
+            painter.drawText(box, Qt.AlignCenter, label)
+        painter.end()
