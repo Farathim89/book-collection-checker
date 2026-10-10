@@ -80,6 +80,7 @@ class Lookup:
     def check(self, s: Series) -> None:
         """Fill the series' known volumes from every source that is on."""
         notes = []
+        s.others = {}  # Google / OpenLibrary: asked again - a fresh answer replaces the old one
         if self.settings.use_audible and (AUDIO in s.formats or s.kind in ("audiobook", "light novel")):
             try:
                 self.audible_series(s)
@@ -297,6 +298,11 @@ class Lookup:
             info = it.get("volumeInfo") or {}
             title = " ".join(x for x in (info.get("title"), info.get("subtitle")) if x)
             if not _series_key_loose(title).startswith(want):
+                continue
+            # the manga's search finds the light novels too ('86--EIGHTY-SIX, Vol. 4 (light novel)') - and back
+            manga = bool(re.search(r"(?i)\bmanga\b|\bcomic\b|graphic novel", title))
+            novel = bool(re.search(r"(?i)light novel|\bnovel\b", title)) and not manga
+            if (s.kind == "manga" and novel) or (s.kind != "manga" and manga):
                 continue
             m = _VOL_RE.search(title[len(s.name):] if title.lower().startswith(s.name.lower()) else title)
             if not m:

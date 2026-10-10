@@ -103,7 +103,11 @@ class Series:
             out.setdefault(i, v)
         owned = [i for o in self.owned if (i := self.index_of(o)) is not None]
         hint = self._whole_hint(out, owned)
-        top = max([*out, float(hint), *owned], default=0)
+        # gaps up to the last volume - but not up to an odd one far out ('Adachi and Shimamura, Vol. 99.9')
+        nums = sorted({*out, *owned})
+        while len(nums) > 1 and nums[-1] > nums[-2] * 2 + 10:
+            nums.pop()
+        top = max([*nums, float(hint)], default=0)
         for n in range(1, int(top) + 1):  # 1..N: AniList knows the count, a gap in yours shows too
             out.setdefault(float(n), Volume(float(n), source="anilist" if n <= hint else "gap"))
         return out

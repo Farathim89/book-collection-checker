@@ -73,3 +73,11 @@ def test_alter_is_another_series():
                      kind="light novel", source="ABS")
     series, _ = group([o("86--EIGHTY-SIX", 1), o("86--EIGHTY-SIX Alter", 1)])
     assert len(series) == 2
+
+
+def test_an_odd_far_number_makes_no_gap_rows():
+    from app.core.models import Series, Volume
+    s = Series("k", "Adachi and Shimamura", "Hitoma Iruma", "light novel")
+    s.audible = {float(i): Volume(float(i), "v") for i in (*range(1, 13), 99.9)}
+    known = s.known("ebook")
+    assert 99.9 in known and 50.0 not in known and max(i for i in known if i < 99) == 12
