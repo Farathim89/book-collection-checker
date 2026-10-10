@@ -70,6 +70,7 @@ class Series:
     audible: dict[float, Volume] = field(default_factory=dict)   # what Audible sells (audio)
     others: dict[float, Volume] = field(default_factory=dict)    # AniList / Google (books)
     total_hint: int | None = None   # AniList: number of volumes
+    manga_hint: int | None = None   # a light novel's manga on AniList: its volumes (0 = exists, count unknown)
     status: str = ""                # AniList: FINISHED / RELEASING
     links: dict[str, str] = field(default_factory=dict)          # source -> page
     checked: str = ""               # when looked up online
@@ -152,6 +153,7 @@ class Series:
         s.audible = {float(k): Volume(**v) for k, v in (d.get("audible") or {}).items()}
         s.others = {float(k): Volume(**v) for k, v in (d.get("others") or {}).items()}
         s.total_hint, s.status = d.get("total_hint"), d.get("status", "")
+        s.manga_hint = d.get("manga_hint")
         s.links, s.checked = d.get("links") or {}, d.get("checked", "")
         s.track = list(d.get("track") or [])
         return s

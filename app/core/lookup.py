@@ -87,6 +87,8 @@ class Lookup:
         if self.settings.use_anilist and s.kind in ("light novel", "manga"):
             try:
                 self.anilist_volumes(s)
+                if s.kind == "light novel" and not s.key.endswith("|manga"):
+                    self.anilist_manga(s)  # is there a manga of it (to show, even when you have none)
             except (OSError, ValueError, KeyError) as e:
                 notes.append(f"AniList: {e}")
         if self.settings.use_google and "ebook" in s.formats and not s.audible and not s.total_hint                 and not self.google_busy:
@@ -227,6 +229,25 @@ class Lookup:
                 s.status = m.get("status") or ""
                 s.links["AniList"] = m.get("siteUrl") or ""
                 return
+
+    def anilist_manga(self, s: Series) -> None:
+        """The manga of a light novel series: how many volumes (for its tab - shown, not counted as missing)."""
+        query = """query ($q: String) { Page(perPage: 6) { media(search: $q, type: MANGA, format_in: [MANGA]) {
+            id siteUrl volumes status title { romaji english } synonyms } } }"""
+        try:
+            data = self.anilist.post_json("https://graphql.anilist.co", {"query": query, "variables": {"q": s.name}})
+        except OSError as e:
+            if "429" in str(e):
+                return  # 'too many requests': the next check asks again
+            raise
+        want = _series_key_loose(s.name)
+        for m in ((data.get("data") or {}).get("Page") or {}).get("media") or []:
+            names = [m["title"].get("english") or "", m["title"].get("romaji") or "", *(m.get("synonyms") or [])]
+            if any(_series_key_loose(n) == want for n in names if n):
+                s.manga_hint = m.get("volumes") or 0
+                s.links["AniList manga"] = m.get("siteUrl") or ""
+                return
+        s.manga_hint = None
 
     # -- Google Books --------------------------------------------------------------------------
     def google_volumes(self, s: Series) -> None:

@@ -446,11 +446,16 @@ class MainWindow(QMainWindow):
         base = s.key.split("|")[0]
         novel, manga = self.series.get(base), self.series.get(base + "|manga")
         tabs = []
-        if novel is not None:
+        if novel is not None:  # what exists - also the formats you don't have (shown, counted only if you collect them)
             if any(o.fmt == AUDIO for o in novel.owned) or novel.audible:
                 tabs.append(("🎧 Audiobook", novel, AUDIO))
-            if any(o.fmt == EBOOK for o in novel.owned) or (novel.kind == "light novel" and novel.known(EBOOK)):
+            if any(o.fmt == EBOOK for o in novel.owned) or novel.known(EBOOK):
                 tabs.append(("📖 Light novel" if novel.kind == "light novel" else "📖 Ebook", novel, EBOOK))
+        if manga is None and novel is not None and novel.manga_hint is not None:
+            # a manga you don't have: AniList's volumes, nothing counted as missing
+            manga = Series(base + "|manga", f"{novel.name} (Manga)", novel.author, "manga",
+                           total_hint=novel.manga_hint or None, checked=novel.checked,
+                           links={k: v for k, v in novel.links.items() if k == "AniList manga"})
         if manga is not None:
             tabs.append(("🗯 Manga", manga, EBOOK))
         return tabs or [("📖 Ebook", s, EBOOK)]
@@ -505,6 +510,11 @@ class MainWindow(QMainWindow):
             more = s.anilist_unlisted(EBOOK)
             if more:
                 extra.append(f"{more} more not listed here (AniList counts side volumes like .5 too)")
+        if s.key not in self.series:  # a manga of this series you don't have
+            extra.append(f"you don't have it - AniList: {s.total_hint} volumes" if s.total_hint
+                         else "you don't have it - still running on AniList, no volume count yet")
+        elif not mine_any(s, fmt) and fmt not in s.formats:
+            extra.append("you don't have these - shown, not counted (tick it below to collect it)")
         if s.links.get("errors"):
             extra.append(f"⚠ {s.links['errors']}")
         if not s.checked:
@@ -515,6 +525,7 @@ class MainWindow(QMainWindow):
         for cb, f in ((self.track_audio, AUDIO), (self.track_ebook, EBOOK)):
             cb.blockSignals(True)
             cb.setChecked(f in s.formats)
+            cb.setEnabled(s.key in self.series)  # a manga you don't have isn't in your collection to set
             cb.blockSignals(False)
         mine = [o for o in s.owned if o.fmt == fmt]
         first = min(mine or s.owned, key=lambda o: o.index if o.index is not None else 9999, default=None)
@@ -923,3 +934,8 @@ class SettingsDialog(QDialog):
         self.sources_changed = before != (s.use_abs, s.abs_url, s.abs_api_key, s.library_folders, s.staging_folders,
                                           s.hidden_series)
         self.accept()
+
+
+def mine_any(s: Series, fmt: str) -> bool:
+    """Do you have any volume of this series in this format?"""
+    return any(o.fmt == fmt for o in s.owned)
