@@ -149,6 +149,8 @@ class Lookup:
     def audible_series(self, s: Series) -> None:
         series_asin = self._find_audible_series(s)
         if not series_asin:
+            s.audible = {}  # no Audible list (any more): an old one - from a mix-up fixed since - goes
+            s.links.pop("Audible", None)
             return
         products = self._series_products(series_asin)
         name = next((x.get("title") for p in products for x in p.get("series") or []

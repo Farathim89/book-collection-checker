@@ -21,7 +21,7 @@ from ..config import STATE, Settings, load_settings, save_settings
 from ..core import store
 from ..core.collect import collect, group
 from ..core.lookup import TLDS, Lookup, check_all
-from ..core.models import AUDIO, EBOOK, Series, fmt_index, series_key
+from ..core.models import AUDIO, EBOOK, Series, fmt_index, link_other_series, series_key
 from ..portable import ui_settings
 from . import theme
 
@@ -406,6 +406,7 @@ class MainWindow(QMainWindow):
         return out
 
     def fill(self) -> None:
+        link_other_series(self.series, self.alone)  # 'The Hobbit' on its own counts for LOTR #0.5
         item = self.menu.currentItem()
         calendar = bool(item and item.data(Qt.UserRole) == ("show", "calendar"))
         alone = bool(item and item.data(Qt.UserRole) == ("show", "standalone"))
@@ -612,6 +613,9 @@ class MainWindow(QMainWindow):
         for o in mine:
             for i in s.numbers_of(o):  # a box set ('Books 1-4') counts for each of its volumes
                 have.setdefault(i, o)
+        for (i, f), o in s.elsewhere.items():  # in another series of yours ('The Hobbit', LOTR #0.5)
+            if f == fmt:
+                have.setdefault(i, o)
         known = s.known(fmt)
         indexes = sorted(set(known) | set(have))
         t.setHorizontalHeaderLabels(["#", "Title", "🎧" if fmt == AUDIO else "📖", "Release"])
@@ -629,6 +633,9 @@ class MainWindow(QMainWindow):
             else:
                 cell = ""
             where = owned.source if owned else ""
+            if owned is not None and owned not in s.owned:
+                where = f"you have it in your series '{owned.series or owned.title}' - {owned.source}"
+                cell += "  (other series)"
             upcoming = bool(vol and vol.upcoming and not owned)
             row = [fmt_index(i), title, cell, vol.release if vol else ""]
             for c, val in enumerate(row):

@@ -156,3 +156,20 @@ def test_a_trilogy_counts_for_three():
     s.owned = [Owned("Pangea Online: The Complete Trilogy", ["S.L. Rowland"], "Pangea Online", 1.0, "audio",
                      "audiobook", "ABS", path=r"H:\A\S.L. Rowland\Pangea Online\1 - Pangea Online - The Complete Trilogy")]
     assert s.have("audio") == {1.0, 2.0, 3.0} and s.missing("audio") == []
+
+
+def test_the_hobbit_on_its_own_counts_for_lotr():
+    from app.core.models import Owned, Series, Volume, link_other_series
+    lotr = Series("lotr", "The Lord of the Rings", "J. R. R. Tolkien", "audiobook")
+    lotr.audible = {0.5: Volume(0.5, "The Hobbit"), 1.0: Volume(1.0, "The Fellowship of the Ring")}
+    lotr.owned = [Owned("The Fellowship of the Ring", ["J. R. R. Tolkien"], "The Lord of the Rings", 1.0, "audio",
+                        "audiobook", "ABS")]
+    hobbit = Owned("The Hobbit", ["J. R. R. Tolkien"], None, None, "audio", "audiobook", "ABS")
+    villain = Series("v", "I'm in Love with the Villainess", "Inori", "light novel")
+    villain.audible = {2.0: Volume(2.0, "I'm in Love with the Villainess")}   # a title that is only the name
+    other = Series("v2", "Villainess Side", "Inori", "light novel")
+    other.owned = [Owned("I'm in Love with the Villainess", ["Inori"], "Villainess Side", 1.0, "audio",
+                         "light novel", "ABS")]
+    link_other_series({"lotr": lotr, "v": villain, "v2": other}, [hobbit])
+    assert lotr.have("audio") == {0.5, 1.0}
+    assert villain.elsewhere == {}

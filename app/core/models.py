@@ -75,6 +75,8 @@ class Series:
     links: dict[str, str] = field(default_factory=dict)          # source -> page
     checked: str = ""               # when looked up online
     track: list[str] = field(default_factory=list)  # formats you collect it in ([] = the ones you own)
+    # volumes of this list you have in ANOTHER series of the author ('The Hobbit', LOTR #0.5) - not saved
+    elsewhere: dict = field(default_factory=dict, repr=False, compare=False)
 
     # -- what you have ------------------------------------------------------
     def index_of(self, o: Owned) -> float | None:
@@ -104,7 +106,8 @@ class Series:
         return out
 
     def have(self, fmt: str) -> set[float]:
-        return {i for o in self.owned if o.fmt == fmt for i in self.numbers_of(o)}
+        return {i for o in self.owned if o.fmt == fmt for i in self.numbers_of(o)} | \
+            {i for (i, f), _ in self.elsewhere.items() if f == fmt}
 
     @property
     def formats(self) -> set[str]:
@@ -164,6 +167,7 @@ class Series:
 
     def to_json(self) -> dict:
         d = asdict(self)
+        d.pop("elsewhere", None)  # worked out again on every load
         d["audible"] = {fmt_index(k): asdict(v) for k, v in self.audible.items()}
         d["others"] = {fmt_index(k): asdict(v) for k, v in self.others.items()}
         return d
@@ -188,3 +192,31 @@ def box_size(text: str) -> int:
     """How many books a box set holds by its name: 'The Complete Trilogy' -> 3, 'Duology' -> 2 (0: none)."""
     m = re.search(r"(?i)\b(" + "|".join(_BOX_WORDS) + r")\b", text or "")
     return _BOX_WORDS[m.group(1).lower()] if m else 0
+
+
+def link_other_series(series: dict, alone: list | None = None) -> None:
+    """A volume of a series' list you have elsewhere - in another series of the same author or as a standalone
+    book - counts as had: 'The Hobbit' (its own folder) is #0.5 of Audible's 'The Lord of the Rings'. Same ASIN,
+    or exactly the same real title (not a title that is only a series name), and the same kind (manga / not)."""
+    by_author: dict[str, list] = {}
+    for s in series.values():
+        for o in s.owned:
+            by_author.setdefault(fold(s.author), []).append((s, o))
+    for o in alone or []:
+        by_author.setdefault(fold(o.author), []).append((None, o))
+    names = {fold(re.sub(r"(?i)\s*\((?:manga|comic)\)", "", s.name)) for s in series.values()}
+    for s in series.values():
+        s.elsewhere = {}
+        manga = s.kind == "manga" or s.key.endswith("|manga")
+        others = [o for g, o in by_author.get(fold(s.author), []) if g is not s
+                  and (o.kind == "manga") == manga]
+        if not others:
+            continue
+        for i, v in {**s.others, **s.audible}.items():
+            fmts = [AUDIO] if i in s.audible and i not in s.others else [AUDIO, EBOOK]
+            title = fold(v.title or "")
+            for o in others:
+                same = (v.asin and o.asin and v.asin == o.asin) or (
+                    title and title not in names and title == fold(o.title or ""))
+                if same and o.fmt in fmts:
+                    s.elsewhere.setdefault((i, o.fmt), o)
