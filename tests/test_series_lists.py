@@ -136,3 +136,14 @@ def test_a_box_set_counts_for_its_volumes():
                Owned("Damned If You Don't", ["M.R. Forbes"], "Chaos of the Covenant", 5.0, "audio", "audiobook", "ABS")]
     assert s.have("audio") == {1.0, 2.0, 3.0, 4.0, 5.0}
     assert [v.index for v in s.missing("audio")] == [6.0, 7.0]
+
+
+def test_a_wrong_asin_in_your_library_does_not_move_a_volume():
+    from app.core.models import Owned, Series, Volume
+    s = Series("m", "Mushoku Tensei", "Rifujin na Magonote", "light novel")
+    s.audible = {1.0: Volume(1.0, "v1", asin="A1"), 2.0: Volume(2.0, "v2", asin="A2"), 6.0: Volume(6.0, "v6", asin="A6")}
+    o1 = Owned("Vol. 1", ["R"], "Mushoku Tensei", 1.0, "audio", "light novel", "ABS", asin="A1")
+    o2 = Owned("Vol. 2", ["R"], "Mushoku Tensei", 2.0, "audio", "light novel", "ABS", asin="A1")   # Vol. 1's ASIN
+    part = Owned("Vol. 6 Part One", ["R"], "Mushoku Tensei", 6.1, "audio", "light novel", "ABS", asin="A6")
+    s.owned = [o1, o2, part]
+    assert (s.index_of(o1), s.index_of(o2), s.index_of(part)) == (1.0, 2.0, 6.0)

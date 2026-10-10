@@ -79,9 +79,11 @@ class Series:
     # -- what you have ------------------------------------------------------
     def index_of(self, o: Owned) -> float | None:
         """Your copy's number - Audible's, when the ASIN is the same ('6.1' Part One is Audible's #6)."""
-        if o.asin:
+        if o.asin and sum(1 for x in self.owned if x.asin == o.asin) == 1:
+            # ... unless the ASIN is wrong in your library: shared by several of your copies, or far from the
+            # copy's own number ('Mushoku Tensei' Vol. 2 carrying Vol. 1's ASIN)
             hit = next((i for i, v in self.audible.items() if v.asin and v.asin == o.asin), None)
-            if hit is not None:
+            if hit is not None and (o.index is None or abs(hit - o.index) < 1):
                 return hit
         return o.index
 
