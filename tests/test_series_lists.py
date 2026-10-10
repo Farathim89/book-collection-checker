@@ -81,3 +81,14 @@ def test_an_odd_far_number_makes_no_gap_rows():
     s.audible = {float(i): Volume(float(i), "v") for i in (*range(1, 13), 99.9)}
     known = s.known("ebook")
     assert 99.9 in known and 50.0 not in known and max(i for i in known if i < 99) == 12
+
+
+def test_a_volume_number_right_after_the_series_name():
+    from app.core.lookup import _volume_after_name
+    assert _volume_after_name("Goblin Slayer, Vol. 3", "Goblin Slayer") == 3
+    assert _volume_after_name("Goblin Slayer, Vol. 14 (light novel)", "Goblin Slayer") == 14
+    assert _volume_after_name("86--EIGHTY-SIX, Vol. 4 (light novel)", "86--EIGHTY-SIX") == 4
+    assert _volume_after_name("Alya Sometimes Hides Her Feelings in Russian, Vol. 4.5", "Alya Sometimes Hides Her Feelings in Russian") == 4.5
+    assert _volume_after_name("Goblin Slayer Side Story: Year One, Chapter 49", "Goblin Slayer") is None
+    assert _volume_after_name("Goblin Slayer Side Story: Year One, Vol. 2", "Goblin Slayer") is None
+    assert _volume_after_name("The Saga of Tanya the Evil, Vol. 3", "Saga of Tanya the Evil") == 3

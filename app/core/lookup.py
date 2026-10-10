@@ -64,6 +64,28 @@ def _names_other_series(p: dict, series_asin: str, series_name: str) -> bool:
     return SequenceMatcher(None, core, rest).ratio() < 0.75
 
 
+def _volume_after_name(title: str, name: str) -> float | None:
+    """The volume number right after the series name: 'Goblin Slayer, Vol. 3', 'Goblin Slayer 3 (light novel)',
+    '86--EIGHTY-SIX, Vol. 4 (light novel)'. None when other words come first ('Goblin Slayer Side Story: Year One,
+    Chapter 49' is another series) or it is a chapter."""
+    if re.search(r"(?i)\bchapter\b|\bch\.\s*\d", title):
+        return None
+    words = [w for w in re.findall(r"[a-z0-9]+", name.lower()) if w not in ("the", "a", "an")]
+    tokens = re.findall(r"[a-z0-9]+(?:\.\d+)?", title.lower())
+    i = 0
+    for w in words:  # walk past the series name, word by word
+        while i < len(tokens) and tokens[i] in ("the", "a", "an"):
+            i += 1
+        if i >= len(tokens) or tokens[i] != w:
+            return None
+        i += 1
+    rest = [t for t in tokens[i:] if t not in ("light", "novel", "manga", "vol", "volume", "book", "part")]
+    if not rest or not re.fullmatch(r"\d+(?:\.\d+)?", rest[0]):
+        return None
+    n = float(rest[0])
+    return n if 0 < n < 200 else None
+
+
 class Lookup:
     def __init__(self, settings: Settings, state: Path):
         cache = Cache(state / "cache.sqlite")
@@ -304,10 +326,9 @@ class Lookup:
             novel = bool(re.search(r"(?i)light novel|\bnovel\b", title)) and not manga
             if (s.kind == "manga" and novel) or (s.kind != "manga" and manga):
                 continue
-            m = _VOL_RE.search(title[len(s.name):] if title.lower().startswith(s.name.lower()) else title)
-            if not m:
-                continue
-            index = float(m.group(1) or m.group(2))
+            index = _volume_after_name(title, name)
+            if index is None:
+                continue  # 'Goblin Slayer Side Story: Year One, Chapter 49' - another series, chapters
             if 0 < index < 200:
                 found.setdefault(index, Volume(index, info.get("title") or "", (info.get("publishedDate") or "")[:10],
                                                url=info.get("infoLink") or "", source="google"))
