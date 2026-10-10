@@ -13,7 +13,8 @@ from PySide6.QtWidgets import (QAbstractItemView, QButtonGroup, QGridLayout, QSc
                                QTabWidget, QToolButton, QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QFrame,
                                QHBoxLayout, QHeaderView, QLabel, QLineEdit, QListWidget, QListWidgetItem,
                                QMainWindow, QMessageBox, QPlainTextEdit, QProgressBar, QPushButton, QSplitter,
-                               QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget, QCheckBox, QComboBox, QTabBar)
+                               QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget, QCheckBox, QComboBox, QTabBar,
+                               QStyledItemDelegate, QStyle, QStyleOptionViewItem, QApplication)
 
 from .. import __version__
 from ..config import STATE, Settings, load_settings, save_settings
@@ -213,6 +214,9 @@ class MainWindow(QMainWindow):
             "series_col_widths", [t.columnWidth(c) for c in range(t.columnCount())]))
         t.setWordWrap(False)
         t.itemSelectionChanged.connect(self.show_series)
+        self._miss_delegate = _MissDelegate(t)
+        for c in range(2, 6):
+            t.setItemDelegateForColumn(c, self._miss_delegate)
         return t
 
     def _calendar(self) -> QTableWidget:
@@ -455,7 +459,7 @@ class MainWindow(QMainWindow):
                     it.setToolTip(f"you have none - {abs(exists) if exists > 0 else 'some'} {word} exist "
                                   "(not counted; tick it in the series to collect it)")
                 elif miss:
-                    it.setForeground(QColor(p.problem))
+                    it.setData(MISS_ROLE, True)  # the delegate: the number you have normal, '✗N' red
                     word = {"A": "audiobook(s)", "LN": "light novel(s)", "M": "manga", "E": "ebook(s)"}[kind]
                     it.setToolTip(f"you have {have} · {miss} {word} missing")
                 elif text and ser.checked:
@@ -1029,3 +1033,33 @@ def _exists_online(novel: Series, kind: str) -> int:
     if novel.others or novel.total_hint:
         return len(novel.known(EBOOK))
     return -1 if novel.links.get("AniList") else 0
+
+
+MISS_ROLE = Qt.UserRole + 3
+
+
+class _MissDelegate(QStyledItemDelegate):
+    """'4  ✗3': the number you have in the normal colour, the missing part in red."""
+
+    def paint(self, painter, option, index) -> None:  # noqa: D102
+        text = index.data() or ""
+        if not index.data(MISS_ROLE) or "✗" not in text:
+            super().paint(painter, option, index)
+            return
+        opt = QStyleOptionViewItem(option)
+        self.initStyleOption(opt, index)
+        opt.text = ""
+        style = opt.widget.style() if opt.widget else QApplication.style()
+        style.drawControl(QStyle.CE_ItemViewItem, opt, painter, opt.widget)  # background, selection
+        have, _, rest = text.partition("✗")
+        p = theme._current  # noqa: SLF001
+        rect = style.subElementRect(QStyle.SE_ItemViewItemText, opt, opt.widget)
+        painter.save()
+        painter.setFont(opt.font)
+        fm = painter.fontMetrics()
+        painter.setPen(QColor(p.text))
+        painter.drawText(rect, Qt.AlignVCenter | Qt.AlignLeft, have)
+        rect.setLeft(rect.left() + fm.horizontalAdvance(have))
+        painter.setPen(QColor(p.problem))
+        painter.drawText(rect, Qt.AlignVCenter | Qt.AlignLeft, "✗" + rest)
+        painter.restore()
