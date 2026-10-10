@@ -5,7 +5,7 @@ import json
 from dataclasses import asdict
 from pathlib import Path
 
-from .models import Owned, Series
+from .models import Owned, Series, series_key
 
 
 def save(state: Path, series: dict[str, Series], alone: list[Owned], scanned: str) -> None:
@@ -28,7 +28,10 @@ def load(state: Path) -> tuple[dict[str, Series], list[Owned], str]:
 def merge_lookups(new: dict[str, Series], old: dict[str, Series]) -> None:
     """A fresh scan keeps what the last online check found (no need to ask again)."""
     for key, s in new.items():
-        if (o := old.get(key)) is not None:
+        o = old.get(key)
+        if o is not None and series_key(o.name) != series_key(s.name):
+            o = None  # the key now holds another series ('86--EIGHTY-SIX Alter', split from 86): ask again
+        if o is not None:
             s.audible, s.others, s.total_hint, s.status = o.audible, o.others, o.total_hint, o.status
             s.links, s.checked, s.track = o.links, o.checked, o.track
             s.manga_hint = o.manga_hint

@@ -63,3 +63,13 @@ def test_anilist_count_with_side_volumes_adds_no_rows():
     plain.audible = {1.0: Volume(1.0, "v")}
     plain.total_hint = 4
     assert sorted(plain.known("ebook")) == [1, 2, 3, 4]
+
+
+def test_alter_is_another_series():
+    from app.core.collect import group
+    from app.core.models import Owned
+    def o(series, i):
+        return Owned(title=f"{series} {i}", authors=["Asato Asato"], series=series, index=i, fmt="audio",
+                     kind="light novel", source="ABS")
+    series, _ = group([o("86--EIGHTY-SIX", 1), o("86--EIGHTY-SIX Alter", 1)])
+    assert len(series) == 2

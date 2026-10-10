@@ -15,6 +15,7 @@ from .text import fold
 AUDIO_EXTS = {".m4b", ".m4a", ".mp3", ".flac", ".ogg", ".opus", ".aac", ".wma"}
 BOOK_EXTS = {".epub", ".pdf", ".mobi", ".azw3", ".azw", ".cbz", ".cbr"}
 COMIC_EXTS = {".cbz", ".cbr"}
+_SPELLING_EXTRAS = {"too", "the", "series", "novel", "novels", "lightnovel", "s"}  # folded
 _NUM_TITLE_RE = re.compile(r"^(\d+(?:\.\d+)?)(?:-\d+(?:\.\d+)?)?\s+-\s+(.+)$")   # '3 - Title' / '1-4 - Box'
 _SERIES_RE = re.compile(r"^(.*?)\s+#\s*(\d+(?:\.\d+)?)")
 Progress = Callable[[str], None]
@@ -187,9 +188,10 @@ def group(owned: list[Owned], hidden: set[str] = frozenset()) -> tuple[dict[str,
         if s is None:
             continue
         long_ = next((k for k, o in series.items() if k != short and k.endswith("|manga") == short.endswith("|manga")
-                      and k.split("|")[0].startswith(short.split("|")[0]) and len(k) - len(short) <= 6
-                      # ... but 'Classroom of the Elite' / '... (Year 2)' are two series: a number is no spelling
-                      and not re.search(r"\d", k.split("|")[0][len(short.split("|")[0]):])
+                      and k.split("|")[0].startswith(short.split("|")[0])
+                      # only a filler word is a spelling ('..., Too'); '86--EIGHTY-SIX Alter' or '... (Year 2)' is
+                      # another series
+                      and k.split("|")[0][len(short.split("|")[0]):] in _SPELLING_EXTRAS
                       and fold(o.author) == fold(s.author)), None)
         if long_ is not None:
             series[long_].owned += s.owned
