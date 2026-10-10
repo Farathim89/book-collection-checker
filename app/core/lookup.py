@@ -38,6 +38,10 @@ def _title_names(p: dict, series_name: str) -> bool:
     return bool(core) and core in _norm(f"{p.get('title') or ''} {p.get('subtitle') or ''}")
 
 
+_SIDE_RE = re.compile(r"(?i)short stor|side stor|another story|anthology|spin[- ]?off|gaiden|fanbook|"
+                      r"art ?book|guide ?book|official guide|\byear one\b|brand new day")
+
+
 def _names_other_series(p: dict, series_asin: str, series_name: str) -> bool:
     """Audible lists a sibling's volume under this series: the title starts with the shared 'Head:' but goes on
     with another series ('Trapped in a Dating Sim: The World of Otome Games Is Tough for Mobs, Vol. 7' under
@@ -48,7 +52,10 @@ def _names_other_series(p: dict, series_asin: str, series_name: str) -> bool:
         title = (p.get("title") or "").strip()
         if title.lower().startswith((series_name or "").lower()):
             rest = title[len(series_name):]
-            return bool(re.match(r"(?i)^\s*[:\-–(]\s*(?:year|part|season|arc|book)\s*\d", rest))
+            if re.match(r"(?i)^\s*[:\-–(]\s*(?:year|part|season|arc|book)\s*\d", rest):
+                return True
+            # ... and a side series: 'Adachi and Shimamura: Short Stories' under 'Adachi and Shimamura'
+            return bool(_SIDE_RE.search(rest)) and not _SIDE_RE.search(series_name or "")
         return False
     if _title_names(p, series_name):
         return False
@@ -290,18 +297,36 @@ class Lookup:
             return
         data = self.openlib.get_json("https://openlibrary.org/search.json", {
             "author": s.author, "limit": 200, "fields": "key,title,first_publish_year"})
-        works = {}
+        vol_re = re.compile(r"(?i)\b(?:vol(?:ume)?|book)\.?\s*(\d+(?:\.\s?\d+)?)")  # 'Vol. 11. 5' = 11.5
+        numbered: dict[float, dict] = {}   # OpenLibrary's own 'Vol. 6' -> that work
+        by_title: dict[str, list] = {}     # an unnumbered title -> its works
         for d in data.get("docs") or []:
             title = re.sub(r"\s*\(duplicate of [^)]*\)", "", d.get("title") or "", flags=re.I)
-            if title and not re.search(r"(?i)graphic novel|\(manga\)|comic", title):
-                works.setdefault(_norm(title), d)
-        for i, v in s.audible.items():
-            want = _norm(re.sub(r"(?i)\s*[:(,]\s*(?:book|vol(?:ume)?\.?)\s*[\d.]+.*$", "", v.title or ""))
-            hit = works.get(want) or next((d for k, d in works.items() if want and len(want) >= 8
-                                            and (k.startswith(want) or want.startswith(k) and len(k) >= 8)), None)
-            if hit:
-                s.others.setdefault(i, Volume(i, hit.get("title") or v.title, str(hit.get("first_publish_year") or ""),
-                                              url=f"https://openlibrary.org{hit.get('key', '')}", source="openlibrary"))
+            if not title or re.search(r"(?i)graphic novel|\(manga\)|comic", title):
+                continue
+            if _SIDE_RE.search(title) and not _SIDE_RE.search(s.name):
+                continue  # 'Bungo Stray Dogs: Another Story, Vol. 2' is another series
+            if (m := vol_re.search(title)) and _norm(s.name)[:10] in _norm(title):
+                numbered.setdefault(float(m.group(1).replace(" ", "")), d)
+            elif not vol_re.search(title):
+                by_title.setdefault(_norm(title), []).append(d)
+        used = set()
+        for i, v in sorted(s.audible.items()):
+            # a work with its own number confirms only that number ('Lily Clairet, Vol. 7' is #7, not #1-7);
+            # an unnumbered one only the volume with exactly its title ('Carl's Doomsday Scenario' = #2)
+            hit = numbered.get(i)
+            if hit is None:
+                want = _norm(re.sub(r"(?i)\s*[:(,]\s*(?:book|vol(?:ume)?\.?)\s*[\d.]+.*$", "", v.title or ""))
+                same = [t for t, ds in by_title.items() if t == want]
+                rivals = [j for j, w in s.audible.items() if j != i and _norm(re.sub(
+                    r"(?i)\s*[:(,]\s*(?:book|vol(?:ume)?\.?)\s*[\d.]+.*$", "", w.title or "")) == want]
+                if same and not rivals:  # one title for several volumes ('Too-Perfect Saint'): proves nothing
+                    hit = by_title[same[0]][0]
+            if hit is None or hit.get("key") in used:
+                continue
+            used.add(hit.get("key"))
+            s.others.setdefault(i, Volume(i, hit.get("title") or v.title, str(hit.get("first_publish_year") or ""),
+                                          url=f"https://openlibrary.org{hit.get('key', '')}", source="openlibrary"))
         if s.others:
             s.links.setdefault("OpenLibrary", f"https://openlibrary.org/search?author={s.author}")
 

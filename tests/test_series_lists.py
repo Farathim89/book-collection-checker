@@ -92,3 +92,35 @@ def test_a_volume_number_right_after_the_series_name():
     assert _volume_after_name("Goblin Slayer Side Story: Year One, Chapter 49", "Goblin Slayer") is None
     assert _volume_after_name("Goblin Slayer Side Story: Year One, Vol. 2", "Goblin Slayer") is None
     assert _volume_after_name("The Saga of Tanya the Evil, Vol. 3", "Saga of Tanya the Evil") == 3
+
+
+def test_openlibrary_one_book_one_volume():
+    from app.core.lookup import Lookup
+    from app.core.models import Series, Volume
+    docs = [{"key": "/w/7", "title": "Lily Clairet, Vol. 7"}, {"key": "/w/1", "title": "Lily Clairet, Vol. 1"},
+            {"key": "/w/k", "title": "Kuma Kuma Kuma Bear (Light Novel) Vol. 11. 5"},
+            {"key": "/w/t", "title": "Too-Perfect Saint"}, {"key": "/w/c", "title": "Carl's Doomsday Scenario"}]
+
+    class FakeHttp:
+        def get_json(self, url, params):
+            return {"docs": docs}
+    lk = Lookup.__new__(Lookup)
+    lk.openlib = FakeHttp()
+    lily = Series("l", "Lily Clairet", "Kaye Ng", "light novel")
+    lily.audible = {float(i): Volume(float(i), f"Lily Clairet, Vol. {i}") for i in range(1, 8)}
+    lk.openlibrary_books(lily)
+    assert sorted(lily.others) == [1.0, 7.0]
+    saint = Series("s", "The Silver Leaf Seductions", "x", "light novel")
+    saint.audible = {float(i): Volume(float(i), "Too-Perfect Saint") for i in range(1, 4)}  # one title, three books
+    lk.openlibrary_books(saint)
+    assert saint.others == {}
+    carl = Series("c", "Dungeon Crawler Carl", "Matt Dinniman", "audiobook")
+    carl.audible = {2.0: Volume(2.0, "Carl's Doomsday Scenario"), 3.0: Volume(3.0, "The Dungeon Anarchist's Cookbook")}
+    lk.openlibrary_books(carl)
+    assert sorted(carl.others) == [2.0]
+
+
+def test_side_stories_are_another_series():
+    assert _names_other_series(_p("Adachi and Shimamura: Short Stories"), "X", "Adachi and Shimamura")
+    assert not _names_other_series(_p("Adachi and Shimamura, Vol. 12"), "X", "Adachi and Shimamura")
+    assert not _names_other_series(_p("Adachi and Shimamura: Short Stories 2"), "X", "Adachi and Shimamura: Short Stories")
