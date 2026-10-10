@@ -123,6 +123,20 @@ class Lookup:
             for p in self._series_products(sib):
                 if _title_names(p, name):
                     self._add_volume(volumes, p, sib, only_new=True)
+        # ... or under the whole franchise / no series at all ('Classroom of the Elite: Year 2, Vol. 11' = the
+        # franchise's #27, Vol. 12.5 in none): a title search finds them - the full series name in the title
+        known = {v.asin for v in volumes.values()}
+        found = self.audible.get_json(self.api, {
+            "title": name, "author": s.author, "num_results": 50, "products_sort_by": "Relevance",
+            "response_groups": "product_desc,series,product_attrs,media", "image_sizes": "500"}).get("products") or []
+        want = _norm(name)
+        for p in found:
+            title = f"{p.get('title') or ''} {p.get('subtitle') or ''}"
+            if p.get("asin") in known or not want or want not in _norm(title):
+                continue
+            m = re.search(r"(?i)\bvol(?:ume)?\.?\s*(\d+(?:\.\d+)?)", title)
+            if m and not _names_other_series(p, series_asin, name):
+                self._add_volume(volumes, p, series_asin, only_new=True, index=float(m.group(1)))
         s.audible = volumes
         s.links["Audible"] = f"{self.site}/series/{series_asin}"
 
@@ -139,13 +153,15 @@ class Lookup:
             out += res.get("products") or []
         return out
 
-    def _add_volume(self, volumes: dict[float, Volume], p: dict, series_asin: str, only_new: bool = False) -> None:
+    def _add_volume(self, volumes: dict[float, Volume], p: dict, series_asin: str, only_new: bool = False,
+                    index: float | None = None) -> None:
         seq = next((x.get("sequence") for x in p.get("series") or [] if x.get("asin") == series_asin), None)
-        try:
-            index = float(str(seq).split("-")[0])
-        except (TypeError, ValueError):
-            return
-        if only_new:  # from another series' list: its number there ('#27') isn't ours - the title's 'Vol. 11' is
+        if index is None:
+            try:
+                index = float(str(seq).split("-")[0])
+            except (TypeError, ValueError):
+                return
+        if only_new and seq is not None:  # from another series' list: its number there ('#27') isn't ours - the title's 'Vol. 11' is
             m = re.search(r"(?i)\bvol(?:ume)?\.?\s*(\d+(?:\.\d+)?)", f"{p.get('title') or ''} {p.get('subtitle') or ''}")
             if m:
                 index = float(m.group(1))
