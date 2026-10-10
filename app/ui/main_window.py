@@ -31,7 +31,10 @@ ALONE_COLS = ["Title", "Author", "Kind", "Format", "Where", "Read"]
 CALENDAR_COLS = ["Date", "Series", "#", "Title", "Author", "You have"]
 KIND_FILTERS = [("Audiobooks", "audiobook"), ("Light novels", "light novel"), ("EBooks", "ebook"),
                 ("Manga", "manga")]
-SERIES_COLS = ["Series", "Author", "Kind", "🎧", "📖", "Missing", "Next release"]
+SERIES_COLS = ["Series", "Author", "🎧", "LN", "M", "E", "Missing", "Next release"]
+SERIES_TIPS = {2: "Audiobooks you have", 3: "Light novels you have (ebooks)", 4: "Manga you have",
+               5: "Ebooks you have (not light novels)"}
+COL_MISSING, COL_NEXT = 6, 7
 VOLUME_COLS = ["#", "Title", "Have", "Release"]  # 'Have' is 🎧 or 📖 - the tab's format
 
 
@@ -101,14 +104,15 @@ class MainWindow(QMainWindow):
         """The series list sorts like you left it (column + direction), saved on every header click."""
         header = self.table.horizontalHeader()
         try:
-            col = int(ui_settings().value("sort_column", 0))
-            order = Qt.SortOrder(int(ui_settings().value("sort_order", int(Qt.AscendingOrder.value))))
+            col = int(ui_settings().value("series_sort_column", 0))
+            order = Qt.SortOrder(int(ui_settings().value("series_sort_order", int(Qt.AscendingOrder.value))))
         except (TypeError, ValueError):
             col, order = 0, Qt.AscendingOrder
         if 0 <= col < self.table.columnCount():
             self.table.sortByColumn(col, order)
         header.sortIndicatorChanged.connect(
-            lambda c, o: (ui_settings().setValue("sort_column", c), ui_settings().setValue("sort_order", int(o.value))))
+            lambda c, o: (ui_settings().setValue("series_sort_column", c),
+                          ui_settings().setValue("series_sort_order", int(o.value))))
 
     # -- layout ------------------------------------------------------------------------------------
     def _sidebar(self) -> QWidget:
@@ -184,6 +188,8 @@ class MainWindow(QMainWindow):
     def _series_table(self) -> QTableWidget:
         t = self.table = QTableWidget(0, len(SERIES_COLS))
         t.setHorizontalHeaderLabels(SERIES_COLS)
+        for c, tip in SERIES_TIPS.items():
+            t.horizontalHeaderItem(c).setToolTip(tip)
         t.setSelectionBehavior(QAbstractItemView.SelectRows)
         t.setSelectionMode(QAbstractItemView.SingleSelection)
         t.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -192,7 +198,7 @@ class MainWindow(QMainWindow):
         head = t.horizontalHeader()
         head.setSectionResizeMode(QHeaderView.Interactive)
         head.setSectionResizeMode(0, QHeaderView.Stretch)  # the series name gets the room
-        for c, width in enumerate((0, 150, 90, 46, 46, 100, 140)):
+        for c, width in enumerate((0, 150, 46, 46, 46, 46, 100, 140)):
             if width:
                 t.setColumnWidth(c, width)
         t.setWordWrap(False)
@@ -396,7 +402,8 @@ class MainWindow(QMainWindow):
         for r, s in enumerate(rows):
             nxt = s.next_release
             miss = s.missing_count
-            values = [s.name, s.author, s.kind, _have(s, AUDIO), _have(s, EBOOK),
+            book = _book_type(s)
+            values = [s.name, s.author, _have(s, AUDIO), *(_have(s, EBOOK) if book == b else "" for b in ("LN", "M", "E")),
                       (_missing_text(s) if miss else ("✓" if s.checked else "")),
                       (f"#{fmt_index(nxt.index)}  {nxt.release}" if nxt else "")]
             for c, val in enumerate(values):
@@ -404,14 +411,15 @@ class MainWindow(QMainWindow):
                 if c == 0:
                     it.setData(Qt.UserRole, s.key)
                     it.setToolTip(f"{s.name}\n{s.author} · {len(s.owned)} books")
-                if c == 5:
+                if c == COL_MISSING:
                     it.setData(Qt.UserRole + 1, miss)  # sorts by the total
                     it.setForeground(QColor(p.problem if miss else p.ready))
                     if miss:
                         a, e = len(s.missing(AUDIO)), len(s.missing(EBOOK))
+                        word = {"LN": "light novel(s)", "M": "manga", "E": "ebook(s)"}[book]
                         it.setToolTip("\n".join(x for x in (f"{a} audiobook(s) missing" if a else "",
-                                                            f"{e} ebook(s) missing" if e else "") if x))
-                if c == 6 and nxt:
+                                                            f"{e} {word} missing" if e else "") if x))
+                if c == COL_NEXT and nxt:
                     it.setForeground(QColor(p.check))
                 t.setItem(r, c, it)
         t.setSortingEnabled(True)
@@ -777,9 +785,14 @@ def make_copyable(table: QTableWidget) -> None:
     table.customContextMenuRequested.connect(menu)
 
 
+def _book_type(s: Series) -> str:
+    """The books of a series as a column: LN (light novel), M (manga / comic) or E (other ebooks)."""
+    return "M" if s.kind in ("manga", "comic") or s.key.endswith("|manga") else "LN" if s.kind == "light novel" else "E"
+
+
 def _missing_text(s: Series) -> str:
-    """'🎧 2  📖 4' - what is missing of which format."""
-    parts = [f"{icon} {n}" for icon, n in (("🎧", len(s.missing(AUDIO))), ("📖", len(s.missing(EBOOK)))) if n]
+    """'🎧 2  LN 4' - what is missing of which format."""
+    parts = [f"{icon} {n}" for icon, n in (("🎧", len(s.missing(AUDIO))), (_book_type(s), len(s.missing(EBOOK)))) if n]
     return "  ".join(parts)
 
 
